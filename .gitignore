@@ -36,3 +36,6 @@ Thumbs.db
 # Misc
 *.log
 /tmp/
+intel/
+workspace/
+*.output
