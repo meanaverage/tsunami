@@ -65,7 +65,7 @@ Tsunami auto-starts the model server and the Python backend. Just type `tsunami`
 
 ## How It Works
 
-![Architecture](architecture.png)
+![Architecture](flow.png)
 
 The agent loop runs one tool per iteration — sequential reasoning. It analyzes your intent, picks the right tool, executes it, observes the result, and repeats until the task is complete.
 
