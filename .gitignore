@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+cli/dist/
+cli/package-lock.json
+
+# Models (too large for git — users download their own)
+models/*.gguf
+
+# Workspace (runtime artifacts)
+workspace/.history/
+workspace/notes/
+workspace/plans/
+workspace/deliverables/
+workspace/*.txt
+workspace/*.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Claude
+.claude/
+
+# Misc
+*.log
+/tmp/

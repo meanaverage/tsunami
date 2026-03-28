@@ -1,0 +1,65 @@
+#!/bin/bash
+# TSUNAMI — Reborn from the Flood
+DIR="$(cd "$(dirname "$(realpath "$0")")" && pwd)"
+cd "$DIR"
+
+# Check model server
+check_model() { curl -sf http://localhost:8090/health > /dev/null 2>&1; }
+
+if ! check_model; then
+  # Find llama-server — check common locations
+  LLAMA=""
+  for p in \
+    "$(which llama-server 2>/dev/null)" \
+    "$HOME/llama.cpp/build/bin/llama-server" \
+    "/usr/local/bin/llama-server" \
+    "$HOME/vscode/signet/forge/llama.cpp/build/bin/llama-server"; do
+    [ -x "$p" ] && LLAMA="$p" && break
+  done
+  # Prefer VL model if available (supports images)
+  VL_MODEL=$(ls models/*VL*.Q6_K.gguf 2>/dev/null | head -1)
+  MMPROJ=$(ls models/*mmproj*.gguf 2>/dev/null | head -1)
+  TEXT_MODEL=$(ls models/Qwen3-8B*.gguf 2>/dev/null | head -1)
+
+  if [ -n "$VL_MODEL" ] && [ -n "$MMPROJ" ] && [ -f "$LLAMA" ]; then
+    echo "  starting vision model: $(basename $VL_MODEL)"
+    "$LLAMA" --model "$VL_MODEL" --mmproj "$MMPROJ" \
+      --host 0.0.0.0 --port 8090 \
+      --ctx-size 32768 --n-gpu-layers 99 --threads 8 > /dev/null 2>&1 &
+    MODEL_PID=$!
+  elif [ -n "$TEXT_MODEL" ] && [ -f "$LLAMA" ]; then
+    echo "  starting text model: $(basename $TEXT_MODEL)"
+    "$LLAMA" --model "$TEXT_MODEL" \
+      --host 0.0.0.0 --port 8090 \
+      --ctx-size 32768 --n-gpu-layers 99 --threads 8 > /dev/null 2>&1 &
+    MODEL_PID=$!
+  fi
+
+  if [ -n "$MODEL_PID" ]; then
+    for i in $(seq 1 30); do check_model && break; sleep 1; done
+  fi
+fi
+
+# Start Python WebSocket backend if not running
+if ! curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
+  python3 -c "
+import sys; sys.path.insert(0,'$DIR')
+from tsunami.server import start_server
+start_server(host='0.0.0.0', port=3000)
+" > /tmp/tsunami_server.log 2>&1 &
+  SERVER_PID=$!
+  for i in $(seq 1 10); do
+    curl -sf http://localhost:3000/api/health > /dev/null 2>&1 && break
+    sleep 0.5
+  done
+fi
+
+cleanup() {
+  [ -n "$SERVER_PID" ] && kill $SERVER_PID 2>/dev/null
+  [ -n "$MODEL_PID" ] && kill $MODEL_PID 2>/dev/null
+}
+trap cleanup EXIT
+
+# Launch Ink frontend
+cd "$DIR/cli"
+exec npx tsx app.jsx "$@"
