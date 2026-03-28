@@ -239,8 +239,7 @@ class CompletionModel(LLMModel):
                 f"- {t['function']['name']}: {t['function']['description']}"
                 for t in tools if t.get("type") == "function"
             )
-            # Insert tool list into the prompt
-            parts.insert(1, f"<|tools|>\nAvailable tools (respond with JSON {{\"name\": \"tool_name\", \"arguments\": {{...}}}}):\n{tool_desc}\n")
+            parts.insert(1, f"<|user|>\nYou MUST respond with exactly one JSON tool call on its own line. No other text before or after. Format:\n{{\"name\": \"tool_name\", \"arguments\": {{...}}}}\n\nAvailable tools:\n{tool_desc}\n")
 
         parts.append("<|assistant|>\n")
         return "".join(parts)

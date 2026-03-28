@@ -151,17 +151,30 @@ class AgentState:
                 func = m.tool_call.get("function", m.tool_call)
                 name = func.get("name", "")
                 args = func.get("arguments", {})
-                # For message tools, just record what was said
+                # Summarize what was done — plain English, no JSON, no brackets
+                # This prevents the model from mimicking the history format
                 if name == "message_info":
-                    tc_text = f"[Informed user: {args.get('text', '')[:200]}]"
+                    tc_text = f"I told the user: {args.get('text', '')[:200]}"
                 elif name == "message_result":
-                    tc_text = f"[Delivered result: {args.get('text', '')[:200]}]"
+                    tc_text = f"I delivered the result: {args.get('text', '')[:200]}"
                 elif name == "message_ask":
-                    tc_text = f"[Asked user: {args.get('text', '')[:200]}]"
+                    tc_text = f"I asked the user: {args.get('text', '')[:200]}"
+                elif name == "file_read":
+                    tc_text = f"I read the file {args.get('path', '')}"
+                elif name == "file_write":
+                    tc_text = f"I wrote to {args.get('path', '')}"
+                elif name == "file_edit":
+                    tc_text = f"I edited {args.get('path', '')}"
+                elif name == "shell_exec":
+                    tc_text = f"I ran: {args.get('command', '')[:100]}"
+                elif name == "search_web":
+                    tc_text = f"I searched for: {args.get('query', '')}"
+                elif name == "match_glob":
+                    tc_text = f"I searched for files matching: {args.get('pattern', '')}"
+                elif name == "match_grep":
+                    tc_text = f"I grepped for: {args.get('pattern', '')}"
                 else:
-                    # For action tools, keep it brief
-                    brief_args = {k: str(v)[:100] for k, v in args.items()}
-                    tc_text = f"[Used {name}: {json.dumps(brief_args)}]"
+                    tc_text = f"I used {name}"
                 msgs.append({"role": "assistant", "content": tc_text})
             else:
                 msgs.append({"role": m.role, "content": m.content})
