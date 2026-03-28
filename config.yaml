@@ -28,7 +28,7 @@ search_backend: duckduckgo
 
 # --- Tools ---
 # "core" = 16 tools (~1800 tokens, faster), "full" = 35 tools (everything)
-tool_profile: core
+tool_profile: full
 
 # --- Browser ---
 browser_headless: true
