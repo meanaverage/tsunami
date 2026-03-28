@@ -164,7 +164,10 @@ async def websocket_endpoint(ws: WebSocket):
             if msg.get("type") == "run":
                 task = msg.get("task", "")
                 if task:
-                    await run_agent_with_streaming(ws, task)
+                    if task.startswith("/"):
+                        await handle_command(ws, task)
+                    else:
+                        await run_agent_with_streaming(ws, task)
 
             elif msg.get("type") == "ping":
                 await ws.send_text(json.dumps({"type": "pong"}))
@@ -174,10 +177,118 @@ async def websocket_endpoint(ws: WebSocket):
         log.info(f"WebSocket disconnected. {len(connections)} active.")
 
 
+# ── Slash commands — programmatic, not agentic ──
+
+# Server-level active project state
+_active_project: str | None = None
+
+
+async def handle_command(ws: WebSocket, command: str):
+    """Handle /commands without involving the agent."""
+    global _active_project
+    parts = command.strip().split(None, 2)
+    cmd = parts[0].lower()
+
+    cfg = get_config()
+    workspace = Path(cfg.workspace_dir)
+
+    if cmd == "/project":
+        if len(parts) == 1:
+            # List projects
+            projects = Agent.list_projects(cfg.workspace_dir)
+            if not projects:
+                text = "No projects yet. Create one with /project new <name>"
+            else:
+                lines = ["Projects:\n"]
+                for p in projects:
+                    marker = "●" if p["has_tsunami_md"] else "○"
+                    active = " ← active" if p["name"] == _active_project else ""
+                    lines.append(f"  {marker} {p['name']} ({p['files']} files){active}")
+                text = "\n".join(lines)
+            await ws.send_text(json.dumps({"type": "complete", "result": text, "iterations": 0}))
+
+        elif parts[1] == "new" and len(parts) == 3:
+            # Create new project
+            name = parts[2]
+            proj_dir = workspace / "deliverables" / name
+            proj_dir.mkdir(parents=True, exist_ok=True)
+            tmd = proj_dir / "tsunami.md"
+            tmd.write_text(f"# {name}\n\nNew project.\n")
+            _active_project = name
+            await ws.send_text(json.dumps({
+                "type": "complete",
+                "result": f"Created project: {name}\nEdit {tmd} to add project context.",
+                "iterations": 0,
+            }))
+
+        else:
+            # Switch to project
+            name = parts[1]
+            proj_dir = workspace / "deliverables" / name
+            if not proj_dir.exists():
+                await ws.send_text(json.dumps({
+                    "type": "error",
+                    "message": f"Project '{name}' not found. Use /project to list.",
+                }))
+                return
+
+            _active_project = name
+            # Read tsunami.md
+            tmd = proj_dir / "tsunami.md"
+            context = tmd.read_text() if tmd.exists() else "No tsunami.md"
+            files = [str(f.relative_to(proj_dir)) for f in sorted(proj_dir.rglob("*"))
+                     if f.is_file() and f.name != "tsunami.md"]
+            text = f"Active project: {name}\n\n{context}\n\nFiles:\n  " + "\n  ".join(files) if files else f"Active project: {name}\n\n{context}"
+            await ws.send_text(json.dumps({"type": "complete", "result": text, "iterations": 0}))
+
+    elif cmd == "/serve":
+        port = parts[1] if len(parts) > 1 else "8080"
+        if _active_project:
+            serve_dir = str(workspace / "deliverables" / _active_project)
+        else:
+            serve_dir = str(workspace / "deliverables")
+
+        import subprocess
+        subprocess.Popen(
+            ["python3", "-m", "http.server", port, "--directory", serve_dir],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        await ws.send_text(json.dumps({
+            "type": "complete",
+            "result": f"Serving {serve_dir} on http://localhost:{port}",
+            "iterations": 0,
+        }))
+
+    elif cmd == "/help":
+        await ws.send_text(json.dumps({
+            "type": "complete",
+            "result": (
+                "Commands:\n"
+                "  /project              list projects\n"
+                "  /project <name>       switch to project (loads tsunami.md)\n"
+                "  /project new <name>   create new project\n"
+                "  /serve [port]         serve active project on localhost\n"
+                "  /help                 this message\n"
+                "  exit                  quit\n"
+                "\nAnything else goes to the agent."
+            ),
+            "iterations": 0,
+        }))
+
+    else:
+        await ws.send_text(json.dumps({
+            "type": "error",
+            "message": f"Unknown command: {cmd}. Type /help for commands.",
+        }))
+
+
 async def run_agent_with_streaming(ws: WebSocket, task: str):
     """Run the agent loop, streaming each iteration to the WebSocket."""
     cfg = get_config()
     agent = Agent(cfg)
+
+    # Inject active project context
+    if _active_project:
+        agent.set_project(_active_project)
 
     # Send start event
     await ws.send_text(json.dumps({
