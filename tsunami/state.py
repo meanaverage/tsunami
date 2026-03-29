@@ -147,9 +147,11 @@ class AgentState:
             if m.role == "tool_result":
                 msgs.append({"role": "user", "content": m.content})
             elif m.role == "assistant" and m.tool_call:
-                # Minimal assistant response — just "ok" to acknowledge
-                # Any descriptive text here gets mimicked by the model on next turn
-                msgs.append({"role": "assistant", "content": "ok"})
+                # Echo the tool call JSON so the model sees its own pattern
+                import json
+                tc = m.tool_call.get("function", m.tool_call)
+                tc_json = json.dumps({"name": tc.get("name", ""), "arguments": tc.get("arguments", {})})
+                msgs.append({"role": "assistant", "content": tc_json})
             else:
                 msgs.append({"role": m.role, "content": m.content})
 
