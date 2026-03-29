@@ -49,8 +49,8 @@ def load_model(model_dir="/ark/models/Qwen-Image-2512", gguf_path="/ark/models/q
         print(f"Local models not found, loading from HF...")
         pipe = DiffusionPipeline.from_pretrained("Qwen/Qwen-Image-2512", torch_dtype=dtype)
 
-    pipe.enable_model_cpu_offload()
-    print("Model loaded with CPU offload.")
+    pipe.to("cuda")
+    print("Model loaded on GPU.")
 
 
 def generate(prompt, negative_prompt="", width=1024, height=1024, steps=30, cfg=4.0, seed=-1):

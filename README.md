@@ -146,7 +146,7 @@ docker run --gpus all -d --ipc=host \
   python3 /ark/serve_diffusion.py"
 ```
 
-The server loads the transformer from the local GGUF (quantized weights, dequantized per-layer during inference) and the text encoder + VAE from `models/Qwen-Image-2512/`. Uses `enable_model_cpu_offload()` to coexist with the LLM in shared memory.
+The server loads the transformer from the local GGUF (quantized weights, dequantized per-layer during inference) and the text encoder + VAE from `models/Qwen-Image-2512/`. Loads directly to GPU — on unified memory systems (DGX Spark) there's no CPU/GPU distinction so offloading adds overhead for zero benefit.
 
 **2. OpenAI DALL-E** — set `OPENAI_API_KEY` env var, uses DALL-E 3.
 
