@@ -64,7 +64,17 @@ When building ANY website or web page:
    <script src="animations.js" defer></script>
 5. The landing.css template has: .hero, .btn-primary, .btn-secondary, .stats, .cta, .testimonial, nav
 6. The dark-edu.css template has: .card, .card-grid, .formula, .info-box, .warning-box, .controls
-7. Both share: .container, .badge-green/yellow/red/blue, table, pre, code""")
+7. Both share: .container, .badge-green/yellow/red/blue, table, pre, code
+
+## Web Quality Rules (NEVER violate these):
+- NEVER use href="#" — always link to real anchors (#features, #pricing) or real URLs
+- NEVER invent CSS classes — only use classes defined in the template CSS files
+- Stats MUST use: <div class="stat"><div class="number count-up" data-target="1000">0</div><div class="label">Label</div></div>
+- Nav MUST use plain <nav> tag — the template CSS styles it automatically
+- Every section should have an id attribute for anchor linking
+- Feature cards should have 2-3 sentences minimum, not one-liners
+- Always include a particle canvas in hero: <canvas id="particles" class="canvas-bg"></canvas>
+- Always init particles: <script>document.addEventListener('DOMContentLoaded',()=>tsunami.particles('particles'))</script>""")
 
     # ── Layer 3: Environment ──
     layers.append(f"""# Environment
