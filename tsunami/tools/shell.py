@@ -44,7 +44,7 @@ class ShellExec(BaseTool):
             "required": ["command"],
         }
 
-    async def execute(self, command: str, timeout: int = 120, workdir: str = "", **kw) -> ToolResult:
+    async def execute(self, command: str, timeout: int = 3600, workdir: str = "", **kw) -> ToolResult:
         try:
             # Resolve workdir — default to the ark directory
             import os

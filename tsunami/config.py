@@ -33,7 +33,7 @@ class TsunamiConfig:
 
     # --- Behavior ---
     max_iterations: int = 200
-    tool_timeout: int = 120  # seconds
+    tool_timeout: int = 0  # 0 = no timeout
     error_escalation_threshold: int = 3
     watcher_interval: int = 5  # check every N iterations
 

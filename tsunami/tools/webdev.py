@@ -541,7 +541,7 @@ class WebdevGenerateAssets(BaseTool):
                 generated = False
                 for endpoint in ["http://localhost:8091/generate"]:
                     try:
-                        async with httpx.AsyncClient(timeout=120) as client:
+                        async with httpx.AsyncClient(timeout=None) as client:
                             resp = await client.post(endpoint, json={
                                 "prompt": prompt,
                                 "width": width,

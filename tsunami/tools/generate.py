@@ -60,7 +60,7 @@ class GenerateImage(BaseTool):
         """Try the TSUNAMI diffusion server (Qwen-Image via Docker)."""
         try:
             import httpx
-            async with httpx.AsyncClient(timeout=300) as client:
+            async with httpx.AsyncClient(timeout=None) as client:
                 # Health check first
                 try:
                     resp = await client.get("http://localhost:8091/health")
