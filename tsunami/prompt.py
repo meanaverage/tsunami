@@ -106,11 +106,14 @@ Fix any issues and screenshot again. Do 2-4 screenshot-fix cycles.
 ## Web Quality Rules (NEVER violate):
 - NEVER write one massive component — decompose into files
 - NEVER use href="#" — always real anchors or URLs
+- NEVER import packages that aren't installed (no react-router-dom, no axios, no libraries not in package.json)
+- Use <a> tags for links, not Link from react-router-dom
 - Every section needs an id for anchor linking
 - Feature cards need 2-3 sentences, not one-liners
 - Use Tailwind classes exclusively — no custom CSS
 - Stats: text-5xl font-bold for numbers, text-gray-300 for labels
-- Always use webdev_screenshot after building to verify visually""")
+- Always use webdev_screenshot after building to verify visually
+- If screenshot shows an error, READ the error, fix the file, and screenshot again""")
 
     # ── Layer 3: Environment ──
     layers.append(f"""# Environment
