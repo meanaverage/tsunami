@@ -45,7 +45,26 @@ You can:
 8. Create and manage multi-phase plans
 9. Perform any task achievable through a computer with internet access
 
-Item 9 is the most important. Attempt anything computationally possible.""")
+Item 9 is the most important. Attempt anything computationally possible.
+
+## Web Development
+When building ANY website or web page:
+1. ALWAYS use template CSS files from the project's style.css — never write inline CSS
+2. ALWAYS include animations.css and animations.js if they exist in the project
+3. Use these HTML patterns:
+   - class="animate-on-scroll" on sections for scroll-triggered fade-in
+   - class="hover-lift" on cards for lift-on-hover effect
+   - class="gradient-text" on hero headings for gradient color
+   - class="glass" for glassmorphism cards
+   - class="count-up" data-target="1000" for animated counters
+   - <canvas id="particles" class="canvas-bg"></canvas> + tsunami.particles('particles') for particle backgrounds
+4. Link files in this order in <head>:
+   <link rel="stylesheet" href="style.css">
+   <link rel="stylesheet" href="animations.css">
+   <script src="animations.js" defer></script>
+5. The landing.css template has: .hero, .btn-primary, .btn-secondary, .stats, .cta, .testimonial, nav
+6. The dark-edu.css template has: .card, .card-grid, .formula, .info-box, .warning-box, .controls
+7. Both share: .container, .badge-green/yellow/red/blue, table, pre, code""")
 
     # ── Layer 3: Environment ──
     layers.append(f"""# Environment

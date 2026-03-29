@@ -208,16 +208,27 @@ async def handle_command(ws: WebSocket, command: str):
             await ws.send_text(json.dumps({"type": "complete", "result": text, "iterations": 0}))
 
         elif parts[1] == "new" and len(parts) == 3:
-            # Create new project
+            # Create new project with template files
             name = parts[2]
             proj_dir = workspace / "deliverables" / name
             proj_dir.mkdir(parents=True, exist_ok=True)
             tmd = proj_dir / "tsunami.md"
             tmd.write_text(f"# {name}\n\nNew project.\n")
+
+            # Auto-copy template files
+            import shutil
+            templates_dir = Path("skills/web-builder/templates")
+            if templates_dir.exists():
+                for tpl in ["dark-edu.css", "animations.css", "animations.js"]:
+                    src = templates_dir / tpl
+                    dst_name = "style.css" if tpl == "dark-edu.css" else tpl
+                    if src.exists() and not (proj_dir / dst_name).exists():
+                        shutil.copy2(src, proj_dir / dst_name)
+
             _active_project = name
             await ws.send_text(json.dumps({
                 "type": "complete",
-                "result": f"Created project: {name}\nEdit {tmd} to add project context.",
+                "result": f"Created project: {name}\nTemplate files: style.css, animations.css, animations.js\nEdit {tmd} to add project context.",
                 "iterations": 0,
             }))
 
