@@ -279,52 +279,53 @@ class CompletionModel(LLMModel):
         # Strip <think>...</think> blocks (Qwen3.5 reasoning)
         content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
 
-        # Try to parse tool call from response — find JSON with "name" and "arguments"
-        try:
-            # Find any JSON object that has "name" and "arguments"
-            # Use greedy matching for arguments since they can contain nested braces
-            for match in re.finditer(r'\{[^{}]*"name"\s*:\s*"[^"]+?"[^{}]*"arguments"\s*:\s*\{', content):
-                start = match.start()
-                # Find the matching closing brace for arguments
-                depth = 0
-                i = content.index('"arguments"', start)
-                i = content.index('{', i)
-                for j in range(i, len(content)):
-                    if content[j] == '{': depth += 1
-                    elif content[j] == '}': depth -= 1
-                    if depth == 0:
-                        # Find the outer closing brace
-                        end = content.index('}', j + 1) + 1 if j + 1 < len(content) and '}' in content[j+1:] else j + 1
-                        try:
-                            tc_json = json.loads(content[start:end])
-                            tool_call = ToolCall(
-                                name=tc_json["name"],
-                                arguments=tc_json["arguments"] if isinstance(tc_json["arguments"], dict) else json.loads(tc_json["arguments"]),
-                            )
-                            content = content[:start].strip()
-                            break
-                        except (json.JSONDecodeError, KeyError):
-                            # Try with just the inner part
-                            try:
-                                args_str = content[i:j+1]
-                                name_match = re.search(r'"name"\s*:\s*"(\w+)"', content[start:])
-                                if name_match:
-                                    tool_call = ToolCall(
-                                        name=name_match.group(1),
-                                        arguments=json.loads(args_str),
-                                    )
-                                    content = content[:start].strip()
-                                    break
-                            except (json.JSONDecodeError, KeyError):
-                                pass
-                        break
-        except (ValueError, IndexError):
-            pass
+        # Strip markdown code fences that wrap JSON
+        content = re.sub(r'^```(?:json)?\s*\n?', '', content)
+        content = re.sub(r'\n?```\s*$', '', content)
+        content = content.strip()
 
-        # Clean up any remaining thinking/reasoning text
-        content = re.sub(r'^\s*I need to.*?(?=\n\n|\Z)', '', content, flags=re.DOTALL).strip()
+        # Strategy: find the outermost { } that contains "name" and parse it
+        tool_call = self._extract_tool_call(content)
+        if tool_call:
+            # Remove the tool call JSON from content
+            content = re.sub(r'\{[^{}]*"name".*', '', content, flags=re.DOTALL).strip()
 
         return LLMResponse(content=content, tool_call=tool_call, raw=data)
+
+    @staticmethod
+    def _extract_tool_call(text: str):
+        """Extract a tool call JSON from text. Uses json.loads with progressive end search."""
+        import json
+
+        # Find the start of a JSON object containing "name"
+        idx = text.find('"name"')
+        if idx == -1:
+            return None
+
+        # Walk backwards to find the opening brace
+        start = text.rfind('{', 0, idx)
+        if start == -1:
+            return None
+
+        # Try parsing from start, extending end progressively
+        # json.loads handles nested braces inside strings correctly
+        for end in range(start + 10, len(text) + 1):
+            if text[end - 1] != '}':
+                continue
+            candidate = text[start:end]
+            try:
+                obj = json.loads(candidate)
+                if isinstance(obj, dict) and "name" in obj:
+                    args = obj.get("arguments", {})
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except (json.JSONDecodeError, TypeError):
+                            args = {}
+                    return ToolCall(name=obj["name"], arguments=args if isinstance(args, dict) else {})
+            except json.JSONDecodeError:
+                continue
+        return None
 
 
 def create_model(backend: str, model_name: str, endpoint: str,
