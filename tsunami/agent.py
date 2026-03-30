@@ -163,9 +163,10 @@ class Agent:
             iter_start = time.time()
 
             # Context compression check — every 10 iterations
-            if self.state.iteration % 5 == 0 and needs_compression(self.state, max_tokens=24000):
+            # Compress aggressively — system prompt + tools use ~6K tokens
+            if self.state.iteration % 3 == 0 and needs_compression(self.state, max_tokens=18000):
                 log.info("Context approaching limit — compressing...")
-                await compress_context(self.state, self.model, max_tokens=24000, keep_recent=8)
+                await compress_context(self.state, self.model, max_tokens=18000, keep_recent=6)
 
             try:
                 result = await self._step()
