@@ -75,8 +75,15 @@ class FileRead(BaseTool):
             total = len(lines)
             selected = lines[offset:offset + limit]
             numbered = [f"{i + offset + 1:>5} | {line}" for i, line in enumerate(selected)]
-            header = f"[{p.name}] Lines {offset+1}-{offset+len(selected)} of {total}"
-            return ToolResult(header + "\n" + "\n".join(numbered))
+            result = "\n".join(numbered)
+
+            # Cap output at 8000 chars (~2000 tokens) to prevent context overflow
+            max_chars = 8000
+            if len(result) > max_chars:
+                result = result[:max_chars] + f"\n... [TRUNCATED — file has {total} lines, showing {max_chars} chars. Use offset/limit to read more.]"
+
+            header = f"[{p.name}] Lines {offset+1}-{min(offset+len(selected), total)} of {total}"
+            return ToolResult(header + "\n" + result)
         except Exception as e:
             return ToolResult(f"Error reading {path}: {e}", is_error=True)
 
