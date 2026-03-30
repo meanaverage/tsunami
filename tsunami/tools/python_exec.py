@@ -61,13 +61,27 @@ class PythonExec(BaseTool):
         stdout_buf = io.StringIO()
         stderr_buf = io.StringIO()
 
-        # Inject useful defaults into namespace
+        # Inject useful defaults into namespace (persistent across calls)
         if "os" not in _namespace:
-            import os
+            import os, json, csv, re, math, datetime, collections
             from pathlib import Path
+
             _namespace["os"] = os
+            _namespace["json"] = json
+            _namespace["csv"] = csv
+            _namespace["re"] = re
+            _namespace["math"] = math
+            _namespace["datetime"] = datetime
+            _namespace["collections"] = collections
             _namespace["Path"] = Path
             _namespace["__builtins__"] = __builtins__
+
+            # Set working directory to project root
+            ark_dir = str(Path(__file__).parent.parent.parent)
+            os.chdir(ark_dir)
+            _namespace["ARK_DIR"] = ark_dir
+            _namespace["WORKSPACE"] = os.path.join(ark_dir, "workspace")
+            _namespace["DELIVERABLES"] = os.path.join(ark_dir, "workspace", "deliverables")
 
         try:
             with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
