@@ -72,17 +72,18 @@ The agent loop runs one tool per iteration — sequential reasoning. It analyzes
 
 ## Features
 
-- **35 tools** — file ops, shell, browser (Playwright), web search, planning, parallel batch, image generation, tunnel exposure, scheduling
+- **20 bootstrap tools** + lazy-loaded toolboxes (browser, webdev, generate, services, parallel, management)
+- **CodeAct** — persistent Python interpreter (`python_exec`) collapses multi-step operations into one call
+- **Dual-model architecture** — 122B for reasoning/tool calling, 2B for fast summarization via `summarize_file`
+- **Manus-style context management** — file system as unlimited memory, auto-compress on overflow, plan at context tail
+- **React + Tailwind scaffolding** — `webdev_scaffold` creates full Vite projects with TypeScript, pre-flight build checks
+- **Screenshot feedback loop** — Playwright screenshots with DOM error detection (catches Vite/React build errors)
+- **Image generation** — Qwen-Image-2512 GGUF via diffusers, local inference
+- **LaTeX papers** — writes and compiles arxiv-format research papers via pdflatex
+- **Session persistence** — JSONL save/load with `session_list` and `session_summary` for task resumption
 - **Ink CLI** — React-based terminal UI with spinner, action labels, slash commands
 - **Web UI** — browser-based interface with real-time WebSocket streaming
-- **File attachments** — `/attach` opens system file picker, or `/attach <path>` directly
-- **Vision** — attach images for the agent to see (requires VL model + mmproj)
 - **Projects** — `/project` to list, switch, create projects with persistent `tsunami.md` context
-- **Image generation** — diffusion server, DALL-E, or any custom endpoint
-- **Session persistence** — conversations saved as JSONL
-- **Context compression** — automatic summarization when context grows too long
-- **The Watcher** — optional secondary model that reviews decisions
-- **Skills system** — extensible capability modules in `skills/`
 - **Auto model server** — detects GGUF in `models/`, starts llama-server automatically
 
 ## Slash Commands
@@ -168,28 +169,28 @@ Supported aspect ratios: `1:1` (1328x1328), `16:9` (1664x928), `9:16` (928x1664)
 
 ```
 tsunami/              Python agent package
-  agent.py            Core loop — the heartbeat
-  model.py            LLM backends (Ollama, vLLM, OpenAI-compat)
-  prompt.py           System prompt — the agent's DNA
-  state.py            Conversation + plan management
-  tools/              35 tools (file, shell, browser, search, plan, ...)
-  server.py           FastAPI WebSocket backend
-  watcher.py          Optional self-evaluation
-  compression.py      Context window management
-  session.py          Save/load conversations
+  agent.py            Core loop — auto-compress on overflow, plan-at-tail
+  model.py            LLM backends (Completion, OpenAI-compat, Ollama)
+  prompt.py           System prompt (3832 tokens, optimized)
+  state.py            Conversation + plan + context management
+  compression.py      Auto-compress with error retention
+  session.py          JSONL save/load for task resumption
+  tools/
+    filesystem.py     file_read/write/edit/append (8K char cap, smart truncation)
+    shell.py          shell_exec (rm -rf blocker)
+    python_exec.py    CodeAct — persistent Python interpreter
+    summarize.py      2B-powered file summarization
+    search.py         DuckDuckGo + Brave + HTML fallback
+    webdev.py         Scaffold, serve (tsc pre-flight), screenshot (DOM error detection)
+    toolbox.py        Lazy-load: browser, webdev, generate, services, parallel, management
+    subtask.py        Task decomposition (create/done)
+    session_tools.py  Session list/summary for resumption
 
 cli/                  Ink terminal UI (Node.js)
-  app.jsx             React components for the REPL
-
 ui/                   Web UI
-  index.html          Browser-based interface
 
-models/               Put your GGUF files here (not tracked by git)
-
-skills/               Extensible capability modules
-  researcher/         Deep research with citations
-  web-builder/        Web app scaffolding
-  skill-creator/      Guide for making new skills
+models/               GGUF models (not tracked)
+toolboxes/            Capability descriptions for lazy loading
 
 workspace/            Agent's working directory (runtime, not tracked)
 
