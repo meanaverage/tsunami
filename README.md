@@ -2,9 +2,11 @@
 
 **Agentic Reborn.**
 
+**[Live Demo](https://gobbleyourdong.github.io/tsunami/)** — this page was built by Tsunami autonomously in 19 iterations using Qwen3.5-27B.
+
 ![TSUNAMI CLI](screenshot.png)
 
-An autonomous AI agent with a CLI + web interface, powered by local models. Plans before it acts, searches before it answers, builds real things, finishes what it starts, and never asks unnecessary questions. Runs entirely on local hardware — no cloud API required.
+An autonomous AI agent powered by local models. Vision, native function calling, image generation, persistent Python interpreter — all running on your hardware. No cloud, no API keys, no subscription.
 
 ## Quick Start
 
