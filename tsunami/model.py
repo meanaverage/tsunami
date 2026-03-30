@@ -179,11 +179,22 @@ class OpenAICompatModel(LLMModel):
             payload["tool_choice"] = "auto"
 
         async with httpx.AsyncClient(timeout=900) as client:
-            resp = await client.post(
-                f"{self.endpoint}/v1/chat/completions",
-                json=payload,
-                headers=headers,
-            )
+            for attempt in range(3):
+                resp = await client.post(
+                    f"{self.endpoint}/v1/chat/completions",
+                    json=payload,
+                    headers=headers,
+                )
+                if resp.status_code == 500 and payload["max_tokens"] > 512:
+                    # Server error — likely generation exceeded context slot.
+                    # Halve max_tokens and retry.
+                    payload["max_tokens"] = payload["max_tokens"] // 2
+                    continue
+                if resp.status_code == 400 and payload["max_tokens"] > 512:
+                    # Context overflow — halve and retry
+                    payload["max_tokens"] = payload["max_tokens"] // 2
+                    continue
+                break
             resp.raise_for_status()
             data = resp.json()
 
