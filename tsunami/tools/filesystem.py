@@ -30,6 +30,20 @@ def _is_safe_write(p: Path, workspace_dir: str) -> str | None:
     if resolved.startswith(models_dir):
         return f"BLOCKED: Cannot write to models directory."
 
+    # Config protection — prevent weakening quality gates (ECC pattern)
+    protected_configs = [
+        ".eslintrc", "eslint.config", "biome.json", "ruff.toml",
+        ".prettierrc", "tsconfig.json", "tsconfig.app.json",
+        ".gitignore", "package-lock.json", "yarn.lock",
+    ]
+    filename = p.name.lower()
+    # Only protect configs outside of workspace/deliverables (project configs are fine)
+    deliverables = str(Path(workspace_dir) / "deliverables")
+    if not resolved.startswith(deliverables):
+        for config in protected_configs:
+            if filename == config or filename.startswith(config.split(".")[0]):
+                return f"BLOCKED: Cannot modify {p.name} — config protection. Fix the code, not the config."
+
     return None
 
 

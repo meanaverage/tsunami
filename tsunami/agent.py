@@ -177,9 +177,18 @@ class Agent:
             self.state.iteration += 1
             iter_start = time.time()
 
-            # Context compression check
-            if self.state.iteration % 3 == 0 and needs_compression(self.state, max_tokens=18000):
-                log.info("Context approaching limit — compressing...")
+            # Strategic compaction — at phase boundaries, not arbitrary intervals
+            # ECC pattern: compact after milestones, not mid-task
+            should_compact = False
+            if needs_compression(self.state, max_tokens=18000):
+                should_compact = True
+            elif self.observer.call_count >= 50 and self.observer.call_count % 25 == 0:
+                # ECC: suggest at 50 calls, then every 25
+                if needs_compression(self.state, max_tokens=14000):
+                    should_compact = True
+
+            if should_compact:
+                log.info(f"Compacting at iteration {self.state.iteration} ({self.observer.call_count} tool calls)")
                 await compress_context(self.state, self.model, max_tokens=18000, keep_recent=6)
 
             # Background learning — analyze observations every 20 tool calls
