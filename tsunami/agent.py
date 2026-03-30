@@ -173,10 +173,22 @@ class Agent:
                 consecutive_errors = 0  # reset on success
             except Exception as e:
                 consecutive_errors += 1
+                error_str = str(e)
                 log.error(f"Agent loop error at iteration {self.state.iteration}: {e}")
+
+                # Auto-compress on context overflow (400 Bad Request)
+                if "400" in error_str and consecutive_errors <= 2:
+                    log.info("Context overflow detected — force compressing...")
+                    try:
+                        await compress_context(self.state, self.model, max_tokens=8000, keep_recent=4)
+                        log.info("Force compression done, retrying...")
+                    except Exception:
+                        pass  # compression failed, will retry anyway
+                    continue
+
                 self.state.add_system_note(f"Loop error: {e}")
                 save_session(self.state, self.session_dir, self.session_id)
-                if consecutive_errors >= 3:
+                if consecutive_errors >= 5:
                     return f"Agent encountered {consecutive_errors} consecutive errors. Last: {e}"
                 continue
 
