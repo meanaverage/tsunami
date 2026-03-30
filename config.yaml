@@ -1,9 +1,9 @@
 # TSUNAMI — Agentic Reborn
 # Configuration for the Resonant Ark
 
-# --- Primary Model (heavy reasoning, coding, tool use) ---
-model_backend: completion
-model_name: "Qwen3.5-122B-A10B"
+# --- Primary Model (dense 27B with vision + native function calling) ---
+model_backend: api
+model_name: "Qwen3.5-27B"
 model_endpoint: "http://localhost:8090"
 temperature: 0.7
 max_tokens: 4096

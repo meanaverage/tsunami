@@ -29,8 +29,8 @@ mkdir -p models
 
 | Model | Files | Size | Port | Notes |
 |-------|-------|------|------|-------|
-| [Qwen3.5-122B-A10B MoE (MXFP4)](https://huggingface.co/unsloth/Qwen3.5-122B-A10B-GGUF) | `Qwen3.5-122B-A10B-MXFP4_MOE-0000{1,2,3}-of-00003.gguf` | 70GB | 8090 | Primary model. 122B params, 10B active. ~20 tok/s |
-| [Qwen3.5-2B (Q4_K_M)](https://huggingface.co/unsloth/Qwen3.5-2B-GGUF) | `Qwen3.5-2B-Q4_K_M.gguf` | 1.2GB | 8092 | Fast model. Simple tasks, research, Q&A. ~100 tok/s |
+| [Qwen3.5-27B (Q8_0)](https://huggingface.co/unsloth/Qwen3.5-27B-GGUF) | `Qwen3.5-27B-Q8_0.gguf` + `mmproj-BF16.gguf` | 27GB + 889MB | 8090 | Primary model. Dense 27B, vision, native function calling |
+| [Qwen3.5-2B (Q4_K_M)](https://huggingface.co/unsloth/Qwen3.5-2B-GGUF) | `Qwen3.5-2B-Q4_K_M.gguf` | 1.2GB | 8092 | Fast model. Summarization, data gen. ~100 tok/s |
 | [Qwen-Image-2512 (Q4_K_M)](https://huggingface.co/unsloth/Qwen-Image-2512-GGUF) | `qwen-image-2512-Q4_K_M.gguf` | 13GB | 8091 | Image generation via diffusers (see below) |
 
 Place files in `models/`.
@@ -118,7 +118,8 @@ build me a landing page      # agent sees tsunami.md, knows the project
 
 ```
 models/
-  Qwen3.5-122B-A10B-MXFP4_MOE-0000{1,2,3}-of-00003.gguf   ← primary LLM (70GB, 3 shards)
+  Qwen3.5-27B-Q8_0.gguf                                     ← primary LLM (27GB, dense, vision)
+  mmproj-27B-BF16.gguf                                       ← vision projector (889MB)
   Qwen3.5-2B-Q4_K_M.gguf                                    ← fast LLM (1.2GB)
   qwen-image-2512-Q4_K_M.gguf                               ← image gen transformer (13GB)
   Qwen-Image-2512/                                           ← text encoder + VAE (16GB, auto-cached)
@@ -206,17 +207,16 @@ config.yaml           Configuration
 Edit `config.yaml`:
 
 ```yaml
-model_backend: completion     # "completion" (raw, best), "api" (OpenAI-compat), "ollama"
-model_name: "Qwen3.5-122B-A10B"
+model_backend: api            # "api" (OpenAI-compat with native tool calling), "completion" (raw), "ollama"
+model_name: "Qwen3.5-27B"
 model_endpoint: "http://localhost:8090"
 temperature: 0.7
 top_p: 0.8
 presence_penalty: 1.5
-max_tokens: 2048
-tool_profile: full    # "core" (17 tools, fast) or "full" (35 tools)
+max_tokens: 4096
 ```
 
-The `completion` backend uses the raw `/completion` endpoint instead of `/v1/chat/completions`, bypassing chat template issues entirely. Recommended for Qwen3.5 models.
+The `api` backend uses `/v1/chat/completions` with native function calling. Requires `--jinja --chat-template-kwargs '{"enable_thinking":false}'` on llama-server. The `completion` backend is a fallback for models without Jinja template support.
 
 Or set environment variables: `TSUNAMI_MODEL_NAME`, `TSUNAMI_MODEL_ENDPOINT`, etc.
 
