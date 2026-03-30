@@ -246,7 +246,7 @@ class CompletionModel(LLMModel):
                 )
                 tool_lines.append(f'- {f["name"]}({param_desc}): {f["description"]}')
             tool_block = "\n".join(tool_lines)
-            parts.insert(1, f'<|im_start|>user\nRespond with exactly one JSON tool call. Format:\n{{"name": "tool_name", "arguments": {{"param": "value"}}}}\n\nTools:\n{tool_block}<|im_end|>\n')
+            parts.insert(1, f'<|im_start|>user\nRespond with exactly one JSON tool call. Format:\n{{"name": "tool_name", "arguments": {{"param": "value"}}}}\n\nExample:\n{{"name": "file_write", "arguments": {{"path": "workspace/deliverables/test/hello.py", "content": "print(\'hello\')"}}}}\n\nTools:\n{tool_block}<|im_end|>\n')
 
         parts.append("<|im_start|>assistant\n")
         return "".join(parts)

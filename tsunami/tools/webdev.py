@@ -85,6 +85,21 @@ export default defineConfig({
 })
 ''')
 
+            # Step 3b: Relax TypeScript config for LLM-generated code
+            for tsfile in ["tsconfig.json", "tsconfig.app.json"]:
+                tspath = project_dir / tsfile
+                if tspath.exists():
+                    import json
+                    try:
+                        tc = json.loads(tspath.read_text())
+                        co = tc.get("compilerOptions", {})
+                        co["strict"] = False
+                        co["noUnusedLocals"] = False
+                        co["noUnusedParameters"] = False
+                        tspath.write_text(json.dumps(tc, indent=2))
+                    except (json.JSONDecodeError, KeyError):
+                        pass
+
             # Step 4: Set up Tailwind CSS entry
             css_file = project_dir / "src" / "index.css"
             css_file.write_text('@import "tailwindcss";\n')
@@ -202,7 +217,8 @@ export default defineConfig({
 ''')
 
         # tsconfig
-        (project_dir / "tsconfig.json").write_text('{"compilerOptions":{"target":"ES2020","useDefineForClassFields":true,"lib":["ES2020","DOM","DOM.Iterable"],"module":"ESNext","skipLibCheck":true,"moduleResolution":"bundler","allowImportingTsExtensions":true,"isolatedModules":true,"moduleDetection":"force","noEmit":true,"jsx":"react-jsx","strict":true,"noUnusedLocals":true,"noUnusedParameters":true,"noFallthroughCasesInSwitch":true},"include":["src"]}')
+        # Relaxed tsconfig — LLM-generated code often has unused vars/params
+        (project_dir / "tsconfig.json").write_text('{"compilerOptions":{"target":"ES2020","useDefineForClassFields":true,"lib":["ES2020","DOM","DOM.Iterable"],"module":"ESNext","skipLibCheck":true,"moduleResolution":"bundler","allowImportingTsExtensions":true,"isolatedModules":true,"moduleDetection":"force","noEmit":true,"jsx":"react-jsx","strict":false,"noUnusedLocals":false,"noUnusedParameters":false,"noFallthroughCasesInSwitch":true},"include":["src"]}')
 
         # index.html
         (project_dir / "index.html").write_text(f'''<!DOCTYPE html>
