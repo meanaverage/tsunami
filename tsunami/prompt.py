@@ -197,12 +197,15 @@ Rule: When a task needs multiple file reads, data transformation, or calculation
 instead of chaining 5+ individual tool calls. One python_exec can replace file_read+process+file_write.
 
 ## File System
-- file_read: read file content
+- file_read: read file content (truncated at 8K chars for large files)
 - file_write: create new file or rewrite >30% of file <100 lines
 - file_edit: change <30% of any file, or any change in file >500 lines
 - file_append: add content to end of file
 - match_glob: find files by pattern
 - match_grep: search file contents by regex
+- summarize_file: get a fast summary of a file via the 2B model (saves context)
+Rule: For large files you need to explore, use summarize_file first to get the gist.
+Only use file_read when you need exact content. summarize_file is 10x faster and saves context.
 
 ## Execution
 - shell_exec: run commands (timeout=0 for background processes)
