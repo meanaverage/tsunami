@@ -28,6 +28,7 @@ LOADERS = {
     "generate": lambda config: [cls(config) for cls in _generate_tools()],
     "services": lambda config: [cls(config) for cls in _service_tools()],
     "parallel": lambda config: [cls(config) for cls in _parallel_tools()],
+    "management": lambda config: [cls(config) for cls in _management_tools()],
 }
 
 
@@ -58,6 +59,11 @@ def _service_tools():
 def _parallel_tools():
     from .map_tool import MapTool
     return [MapTool]
+
+def _management_tools():
+    from .subtask import SubtaskCreate, SubtaskDone
+    from .session_tools import SessionList, SessionSummary
+    return [SubtaskCreate, SubtaskDone, SessionList, SessionSummary]
 
 
 class LoadToolbox(BaseTool):

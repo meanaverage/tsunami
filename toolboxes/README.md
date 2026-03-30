@@ -10,6 +10,7 @@ Only load what the current task requires — every tool costs context.
 | generate | 1 | Create images via the diffusion server |
 | services | 3 | Expose local services via tunnel, schedule cron jobs, view binary files |
 | parallel | 1 | Run 5+ independent tasks concurrently via map |
+| management | 4 | Subtask tracking (create/done) and session history (list/summary) |
 # Deep Research Skill
 
 Systematic multi-source research with verification and citation.
