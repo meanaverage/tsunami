@@ -1,4 +1,4 @@
-"""Swarm tool — wave dispatches tool-wielding eddy workers.
+"""Tide tool — wave dispatches tool-wielding eddy workers.
 
 The wave (27B) breaks a task into subtasks and sends each to a
 eddy (2B) that has its own agent loop with file_read, shell_exec,
@@ -15,15 +15,15 @@ import os
 
 from .base import BaseTool, ToolResult
 
-log = logging.getLogger("tsunami.swarm")
+log = logging.getLogger("tsunami.tide")
 
 MAX_WORKERS = int(os.environ.get("TSUNAMI_MAX_WORKERS", "4"))
 
 
-class Swarm(BaseTool):
+class Tide(BaseTool):
     """Dispatch parallel eddy workers for batch tasks."""
 
-    name = "swarm"
+    name = "tide"
     description = (
         f"Dispatch up to {MAX_WORKERS} parallel eddy workers for batch tasks. "
         "Each eddy has its own agent loop with tools (file_read, shell_exec, match_grep). "

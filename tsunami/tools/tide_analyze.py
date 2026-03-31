@@ -1,4 +1,4 @@
-"""Swarm analyze — batch-analyze files via parallel eddy workers.
+"""Tide analyze — batch-analyze files via parallel eddy workers.
 
 When given a directory of files and a question, dispatches eddy workers
 that can actually READ the files (via their own file_read tool) and
@@ -14,15 +14,15 @@ from pathlib import Path
 
 from .base import BaseTool, ToolResult
 
-log = logging.getLogger("tsunami.swarm_analyze")
+log = logging.getLogger("tsunami.tide_analyze")
 
 MAX_WORKERS = int(os.environ.get("TSUNAMI_MAX_WORKERS", "16"))
 
 
-class SwarmAnalyze(BaseTool):
+class TideAnalyze(BaseTool):
     """Read many files in parallel via eddy workers and extract patterns."""
 
-    name = "swarm_analyze"
+    name = "tide_analyze"
     description = (
         "Analyze ALL files in a directory using parallel eddy workers. "
         "Each eddy reads its assigned file(s) and answers the question. "
@@ -60,7 +60,7 @@ class SwarmAnalyze(BaseTool):
         if not files:
             return ToolResult(f"No {pattern} files in {directory}", is_error=True)
 
-        log.info(f"Swarm analyzing {len(files)} files with up to {MAX_WORKERS} eddies")
+        log.info(f"Tide analyzing {len(files)} files with up to {MAX_WORKERS} eddies")
 
         from ..eddy import run_swarm, format_swarm_results
 

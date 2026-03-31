@@ -421,7 +421,7 @@ async def run_swarm(
 ) -> list[BeeResult]:
     """Run multiple eddies in parallel with concurrency control.
 
-    The wave calls this to dispatch work to the hive.
+    The wave calls this to dispatch work to the whirlpool.
     """
     sem = asyncio.Semaphore(max_concurrent)
     start = time.time()
@@ -436,7 +436,7 @@ async def run_swarm(
     succeeded = sum(1 for r in results if r.success)
     total_tool_calls = sum(r.tool_calls for r in results)
     log.info(
-        f"Swarm complete: {succeeded}/{len(results)} succeeded, "
+        f"Tide complete: {succeeded}/{len(results)} succeeded, "
         f"{total_tool_calls} tool calls, {elapsed:.0f}ms"
     )
 
@@ -459,8 +459,8 @@ def _sanitize_bee_output(text: str) -> str:
 
 
 def format_swarm_results(results: list[BeeResult]) -> str:
-    """Format swarm results for the wave to consume."""
-    lines = [f"swarm: {len(results)} eddies dispatched"]
+    """Format tide results for the wave to consume."""
+    lines = [f"tide: {len(results)} eddies dispatched"]
     for i, r in enumerate(results):
         status = "ok" if r.success else "FAIL"
         lines.append(f"\n[eddy {i}] {status} ({r.turns} turns, {r.tool_calls} tools, {r.elapsed_ms:.0f}ms)")

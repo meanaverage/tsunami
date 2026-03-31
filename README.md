@@ -42,7 +42,7 @@ tsunami   # auto-detects 9B on next start
 
 Drop any GGUF into `models/` — Tsunami auto-detects on startup. Priority: 27B > 9B > 2B.
 
-### Architecture: Wave/Eddy Swarm
+### Architecture: Wave/Eddy Tide
 
 The 9B wave coordinates, the 2B eddies execute in parallel:
 
@@ -77,8 +77,8 @@ Tsunami detects your memory and auto-configures. You never think about this.
 | 8GB | Full | 9B | 1 | Wave + 1 eddy with vision |
 | 12GB | Full | 9B | 4 | Good for most tasks |
 | 16GB | Full | 9B | 8 | Fast parallel work |
-| 24GB | Full | 9B | 16 | Heavy swarm operations |
-| 32GB+ | Full | 27B | 4+ | Best reasoning + swarm |
+| 24GB | Full | 9B | 16 | Heavy tide operations |
+| 32GB+ | Full | 27B | 4+ | Best reasoning + tide |
 | 64GB+ | Full | 27B | 32 | Maximum configuration |
 
 For 32GB+ systems, swap in the 27B wave:

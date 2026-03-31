@@ -31,7 +31,7 @@ NO_CACHE_TOOLS = frozenset({
     "message_info", "message_ask", "message_result",
     "plan_update", "plan_advance",
     "python_exec",
-    "swarm", "swarm_analyze",
+    "tide", "tide_analyze",
     "search_web",
 })
 
