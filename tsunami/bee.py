@@ -119,6 +119,8 @@ async def _execute_bee_tool(name: str, args: dict, workdir: str) -> str:
         path = args.get("path", "")
         if not path or not isinstance(path, str):
             return "Error: path parameter required (string)"
+        if len(path) > 500:
+            return "Error: path too long (max 500 chars)"
         p = Path(path) if Path(path).is_absolute() else Path(workdir) / path
         # Sandbox: bees can only read within workdir
         try:
@@ -159,6 +161,8 @@ async def _execute_bee_tool(name: str, args: dict, workdir: str) -> str:
         cmd = args.get("command", "")
         if not cmd or not isinstance(cmd, str):
             return "Error: command parameter required (string)"
+        if len(cmd) > 2000:
+            return "Error: command too long (max 2000 chars)"
         # Bash security — bees get stricter checks than queen
         import re
         # Block any rm -rf on root or broad paths
@@ -247,6 +251,11 @@ async def run_bee(
             task=task or "", success=False, output="",
             error="Empty task", elapsed_ms=0,
         )
+
+    # Sanitize control characters from task (null bytes, ANSI escapes)
+    import re as _re
+    task = _re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', task)
+    task = _re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', task)  # strip ANSI escapes
 
     if not system_prompt:
         system_prompt = (
