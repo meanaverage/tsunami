@@ -243,6 +243,11 @@ class Agent:
                 log.info(f"Task complete after {self.state.iteration} iterations")
                 save_session(self.state, self.session_dir, self.session_id)
                 save_session_summary(self.state, self.session_dir, self.session_id)
+                # Background memory extraction (non-blocking)
+                try:
+                    await self.observer.extract_session_memories()
+                except Exception:
+                    pass  # Non-critical
                 return result
 
         # Save on max iterations (incomplete task — summary helps resume)

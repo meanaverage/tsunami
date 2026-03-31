@@ -251,6 +251,64 @@ Rules:
         except Exception:
             return {}
 
+    async def extract_session_memories(self, fast_endpoint: str = "http://localhost:8092"):
+        """Background memory extraction after session ends.
+
+        Analyzes recent observations and writes structured memories to disk.
+        Runs as a background task — doesn't block the agent loop.
+        """
+        recent = self.get_recent_observations(30)
+        if len(recent) < 3:
+            return
+
+        # Build context from observations
+        obs_summary = []
+        for o in recent[-20:]:
+            status = "ERROR" if o.get("error") else "OK"
+            obs_summary.append(f"[{status}] {o['tool']}: {o.get('input', '')[:100]}")
+
+        prompt = (
+            "Analyze these tool call observations from a completed session. "
+            "Extract 1-3 memories worth saving for future sessions.\n\n"
+            "For each memory, output JSON: "
+            '{"id": "short-id", "type": "feedback|project|user", '
+            '"trigger": "when this situation occurs", '
+            '"action": "do this", "confidence": 0.5}\n\n'
+            "Observations:\n" + "\n".join(obs_summary) + "\n\n"
+            "Only extract patterns with clear evidence. If nothing worth saving, output nothing."
+        )
+
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(
+                    f"{fast_endpoint}/v1/chat/completions",
+                    json={
+                        "model": "qwen",
+                        "messages": [
+                            {"role": "system", "content": "Extract memories from agent sessions. Output JSON only."},
+                            {"role": "user", "content": prompt},
+                        ],
+                        "max_tokens": 500,
+                        "temperature": 0.3,
+                    },
+                    headers={"Authorization": "Bearer not-needed"},
+                )
+                if resp.status_code == 200:
+                    content = resp.json()["choices"][0]["message"]["content"]
+                    import re
+                    for line in content.split("\n"):
+                        line = line.strip()
+                        if line.startswith("{"):
+                            try:
+                                memory = json.loads(line)
+                                if "id" in memory and "trigger" in memory:
+                                    self.save_instinct(memory)
+                            except json.JSONDecodeError:
+                                continue
+        except Exception:
+            pass
+
     def format_instincts_for_prompt(self, max_tokens: int = 500) -> str:
         """Format top instincts for injection into system prompt."""
         instincts = self.load_instincts()
