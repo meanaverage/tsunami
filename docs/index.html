@@ -4,9 +4,23 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/tsunami/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>tsunami-demo</title>
+    <title>TSUNAMI — Autonomous Execution Agent</title>
     <script type="module" crossorigin src="/tsunami/assets/index-CFEUQq5s.js"></script>
     <link rel="stylesheet" crossorigin href="/tsunami/assets/index-Ct2waydA.css">
+    <style>
+      #root > div > section:first-child {
+        background-image: url('/tsunami/images/hero-wave.png');
+        background-size: cover;
+        background-position: center;
+      }
+      #root > div > section:first-child::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: rgba(3, 7, 18, 0.65);
+        z-index: 0;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
