@@ -27,26 +27,53 @@ tsunami update    # pulls latest, keeps your workspace and models
 tsunami version   # check current version
 ```
 
-### Upgrade to 27B (recommended for 32GB+ RAM)
+### Upgrade to 9B queen (recommended for 12GB+ VRAM)
 
-The 2B works out of the box — includes vision and function calling. For better quality, add the 27B:
+The 2B works out of the box. For the full queen/bee architecture with vision and image generation:
 
 ```bash
 cd ~/tsunami
-huggingface-cli download unsloth/Qwen3.5-27B-GGUF Qwen3.5-27B-Q8_0.gguf --local-dir models
-huggingface-cli download unsloth/Qwen3.5-27B-GGUF mmproj-BF16.gguf --local-dir models
-tsunami   # auto-detects 27B on next start
+# 9B queen — reasoning, planning, tool dispatch
+huggingface-cli download unsloth/Qwen3.5-9B-GGUF Qwen3.5-9B-Q4_K_M.gguf --local-dir models
+huggingface-cli download unsloth/Qwen3.5-9B-GGUF mmproj-BF16.gguf --local-dir models
+mv models/mmproj-BF16.gguf models/mmproj-9B-BF16.gguf
+tsunami   # auto-detects 9B on next start
 ```
 
-Drop any GGUF into `models/` — Tsunami auto-detects on startup. Priority: 27B dense > 122B MoE > smaller models.
+Drop any GGUF into `models/` — Tsunami auto-detects on startup. Priority: 27B > 9B > 2B.
+
+### Architecture: Queen/Bee Swarm
+
+The 9B queen coordinates, the 2B bees execute in parallel:
+
+```
+User: "analyze all 500 proof files"
+  → Queen (9B): breaks into subtasks, dispatches bees
+    → Bee 1 (2B): file_read → reason → done("finding A")
+    → Bee 2 (2B): file_read → shell_exec → done("finding B")
+    → Bee 3 (2B): match_grep → done("finding C")
+    → Bee 4 (2B): file_read → done("finding D")
+  → Queen: synthesizes all results → delivers answer
+```
+
+Bees have their own agent loops with tools (file_read, shell_exec, match_grep). They run in parallel — stress-tested at 16x oversubscription, 5.6 tasks/sec.
 
 ### Models
 
-| Model | Size | Min RAM | What it does |
-|-------|------|---------|-------------|
-| [Qwen3.5-2B](https://huggingface.co/unsloth/Qwen3.5-2B-GGUF) (Q4_K_M) | 1.2GB | 4GB | Default. Fast, runs on anything |
-| [Qwen3.5-27B](https://huggingface.co/unsloth/Qwen3.5-27B-GGUF) (Q8_0) + mmproj | 28GB | 32GB | Vision, native function calling, best quality |
-| [Qwen-Image-2512](https://huggingface.co/unsloth/Qwen-Image-2512-GGUF) (Q4_K_M) | 13GB | 48GB | Image generation via diffusers (optional) |
+| Component | Model | Size | What it does |
+|-----------|-------|------|-------------|
+| Queen | [Qwen3.5-9B](https://huggingface.co/unsloth/Qwen3.5-9B-GGUF) (Q4_K_M) + mmproj | 6.2GB | Reasoning, vision, tool dispatch |
+| Bees | [Qwen3.5-2B](https://huggingface.co/unsloth/Qwen3.5-2B-GGUF) (Q4_K_M) + mmproj | 1.8GB | Parallel workers with tool access |
+| Image gen | [SD-Turbo](https://huggingface.co/stabilityai/sd-turbo) (fp16) | 2.0GB | Sub-second image generation |
+| **Total** | | **10GB** | **Full stack on a 12GB GPU** |
+
+For 32GB+ systems, swap in the 27B queen for better reasoning:
+
+```bash
+huggingface-cli download unsloth/Qwen3.5-27B-GGUF Qwen3.5-27B-Q8_0.gguf --local-dir models
+huggingface-cli download unsloth/Qwen3.5-27B-GGUF mmproj-BF16.gguf --local-dir models
+mv models/mmproj-BF16.gguf models/mmproj-27B-BF16.gguf
+```
 
 ### Manual install
 
@@ -117,7 +144,7 @@ The agent loop runs one tool per iteration — sequential reasoning. It analyzes
 ### Building
 - **React + Tailwind scaffolding** — Vite projects with relaxed TypeScript, pre-flight build checks
 - **Screenshot feedback loop** — Playwright screenshots with DOM error detection
-- **Image generation** — Qwen-Image-2512 GGUF via diffusers, local inference
+- **Image generation** — SD-Turbo via diffusers, sub-second, 2GB, no Docker
 - **Ink CLI** — React-based terminal UI with spinner, action labels, slash commands
 - **Web UI** — browser-based interface with real-time WebSocket streaming
 
@@ -153,53 +180,29 @@ build me a landing page      # agent sees tsunami.md, knows the project
 
 ```
 models/
-  Qwen3.5-27B-Q8_0.gguf                                     ← primary LLM (27GB, dense, vision)
-  mmproj-27B-BF16.gguf                                       ← vision projector (889MB)
-  Qwen3.5-2B-Q4_K_M.gguf                                    ← fast LLM (1.2GB)
-  qwen-image-2512-Q4_K_M.gguf                               ← image gen transformer (13GB)
-  Qwen-Image-2512/                                           ← text encoder + VAE (16GB, auto-cached)
+  Qwen3.5-9B-Q4_K_M.gguf          ← queen (5.3GB, reasoning + vision + tool dispatch)
+  mmproj-9B-BF16.gguf              ← queen vision projector (880MB)
+  Qwen3.5-2B-Q4_K_M.gguf          ← bees (1.2GB, parallel workers)
+  mmproj-2B-BF16.gguf              ← bee vision projector (641MB)
 ```
+
+SD-Turbo downloads automatically on first image generation (~2GB, cached by HuggingFace).
 
 Or point `--endpoint` at any OpenAI-compatible server.
 
 ## Image Generation (Optional)
 
-Tsunami can generate images via the `generate_image` tool. It tries backends in order:
-
-**1. Diffusion server** (recommended) — [Qwen-Image-2512](https://huggingface.co/Qwen/Qwen-Image-2512) via GGUF + diffusers in Docker:
+Tsunami uses [SD-Turbo](https://huggingface.co/stabilityai/sd-turbo) for image generation. No Docker, no separate server — just `pip install diffusers`:
 
 ```bash
-# Download the GGUF (13GB, Q4_K_M quantized)
-# Place in models/qwen-image-2512-Q4_K_M.gguf
-
-# First run: downloads text encoder + VAE from HF (~16GB, cached in models/Qwen-Image-2512/)
-# Subsequent runs: fully local, zero network access
-
-docker run --gpus all -d --ipc=host \
-  -v $(pwd):/ark -p 8091:8091 \
-  --name tsunami-diffusion \
-  nvcr.io/nvidia/pytorch:25.11-py3 \
-  bash -c "pip install -q 'diffusers>=0.36.0' 'gguf>=0.10.0' transformers accelerate sentencepiece protobuf && \
-  python3 /ark/serve_diffusion.py"
+pip install diffusers torch accelerate
 ```
 
-The server loads the transformer from the local GGUF (quantized weights, dequantized per-layer during inference) and the text encoder + VAE from `models/Qwen-Image-2512/`. Loads directly to GPU — on unified memory systems (DGX Spark) there's no CPU/GPU distinction so offloading adds overhead for zero benefit.
+First use downloads the 2GB model (cached by HuggingFace). Generation takes <1 second on any CUDA GPU.
 
-**2. OpenAI DALL-E** — set `OPENAI_API_KEY` env var, uses DALL-E 3.
-
-**3. Any custom endpoint** — the tool hits `localhost:8091/generate` with a JSON body:
-
-```json
-POST /generate
-{
-  "prompt": "a blue ocean wave",
-  "aspect_ratio": "16:9",
-  "steps": 30,
-  "save_path": "/ark/workspace/deliverables/wave.png"
-}
-```
-
-Supported aspect ratios: `1:1` (1328x1328), `16:9` (1664x928), `9:16` (928x1664), `4:3`, `3:4`, `3:2`, `2:3`. Returns PNG bytes.
+For higher-end systems, the agent also supports:
+- **Any custom endpoint** at `localhost:8091/generate`
+- **OpenAI DALL-E** via `OPENAI_API_KEY` env var
 
 ## File Structure
 
