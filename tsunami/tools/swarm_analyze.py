@@ -46,12 +46,16 @@ class SwarmAnalyze(BaseTool):
         if not directory or not question:
             return ToolResult("directory and question required", is_error=True)
 
+        # Resolve directory — handle absolute, relative, and common mistakes
         root = Path(directory).expanduser().resolve()
         if not root.exists():
-            # Try relative to workspace
-            root = Path(self.config.workspace_dir).parent / directory
-            if not root.exists():
-                return ToolResult(f"Directory not found: {directory}", is_error=True)
+            # Strip leading /workspace/ → workspace/ (common 2B mistake)
+            stripped = directory.lstrip("/")
+            root = Path(self.config.workspace_dir).parent / stripped
+        if not root.exists():
+            root = Path(self.config.workspace_dir).parent / directory.replace("/workspace/", "workspace/")
+        if not root.exists():
+            return ToolResult(f"Directory not found: {directory}. Try: workspace/deliverables/...", is_error=True)
 
         files = sorted(root.glob(pattern))
         if not files:
