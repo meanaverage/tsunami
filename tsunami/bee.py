@@ -443,6 +443,21 @@ async def run_swarm(
     return list(results)
 
 
+def _sanitize_bee_output(text: str) -> str:
+    """Sanitize bee output before sending to queen.
+
+    Prevents: tool call injection, control chars, excessive size.
+    """
+    import re as _re
+    # Strip control characters (null, ANSI escapes, etc.)
+    text = _re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+    text = _re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', text)
+    # Defang JSON that looks like tool calls (prevent queen misparse)
+    text = text.replace('"name":', '"_name":')
+    text = text.replace('"arguments":', '"_arguments":')
+    return text
+
+
 def format_swarm_results(results: list[BeeResult]) -> str:
     """Format swarm results for the queen to consume."""
     lines = [f"swarm: {len(results)} bees dispatched"]
@@ -450,7 +465,7 @@ def format_swarm_results(results: list[BeeResult]) -> str:
         status = "ok" if r.success else "FAIL"
         lines.append(f"\n[bee {i}] {status} ({r.turns} turns, {r.tool_calls} tools, {r.elapsed_ms:.0f}ms)")
         if r.output:
-            lines.append(r.output[:500])
+            lines.append(_sanitize_bee_output(r.output[:500]))
         if r.error:
             lines.append(f"  error: {r.error}")
     return "\n".join(lines)
