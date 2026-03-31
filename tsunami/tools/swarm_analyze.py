@@ -94,33 +94,25 @@ class SwarmAnalyze(BaseTool):
                 batch_results = await asyncio.gather(*[process_file(session, f) for f in batch])
                 results.extend(batch_results)
 
-        # Save raw results if output_path given
-        if output_path:
-            out = Path(output_path)
-            out.parent.mkdir(parents=True, exist_ok=True)
-            with open(out, "w") as f:
-                for name, answer in results:
-                    f.write(f"{name}: {answer}\n")
+        # Always save raw results to disk
+        if not output_path:
+            output_path = str(root / "_swarm_results.txt")
+        out = Path(output_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with open(out, "w") as f:
+            for name, answer in results:
+                f.write(f"{name}: {answer}\n")
 
-        # Synthesize — count themes
+        # Synthesize — short summary for context, full results on disk
         all_text = " ".join(a.lower() for _, a in results)
         from collections import Counter
         words = all_text.split()
-        # Find most common meaningful phrases
         bigrams = [f"{words[i]} {words[i+1]}" for i in range(len(words)-1)]
-        common = Counter(bigrams).most_common(10)
+        common = Counter(bigrams).most_common(8)
 
-        summary = f"Analyzed {len(files)} files ({len(results)} successful) via {MAX_WORKERS} parallel workers.\n\n"
-        summary += "Top recurring themes:\n"
-        for phrase, count in common:
-            if count >= 3:
-                summary += f"  {count}x \"{phrase}\"\n"
-        summary += f"\nFirst 10 results:\n"
-        for name, answer in results[:10]:
-            summary += f"  {name}: {answer[:100]}\n"
-        if len(results) > 10:
-            summary += f"  ... and {len(results)-10} more"
-        if output_path:
-            summary += f"\n\nFull results saved to {output_path}"
+        summary = f"Analyzed {len(files)} files via {MAX_WORKERS} workers.\n"
+        summary += "Top themes: " + ", ".join(f'{p} ({c}x)' for p, c in common if c >= 3) + "\n"
+        summary += f"Full results: {output_path}\n"
+        summary += f"Sample: {results[0][1][:150]}" if results else ""
 
         return ToolResult(summary)

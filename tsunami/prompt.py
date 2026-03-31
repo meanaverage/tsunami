@@ -132,7 +132,8 @@ This prevents context overflow on tasks with 100+ files.""")
 5. Prefer file operations over shell for content manipulation.
 5. Never run complex code inline — save to file first, then execute via shell.
 6. Save findings to files after every 2-3 tool interactions. Files survive; context doesn't.
-7. NEVER use rm -rf on project directories or workspace/deliverables. Other projects live there. Only modify files inside YOUR current project.""")
+7. NEVER use rm -rf on project directories or workspace/deliverables. Other projects live there. Only modify files inside YOUR current project.
+8. When analyzing many files (20+), use swarm_analyze — it reads all files in parallel via workers. Never read 20+ files one at a time.""")
 
     # ── Layer 6: Tool Selection — Decision Boundaries ──
     layers.append("""# Tool Selection
