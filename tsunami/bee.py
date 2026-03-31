@@ -229,9 +229,15 @@ async def run_bee(
                     tc = msg["tool_calls"][0]
                     func = tc["function"]
                     name = func["name"]
-                    try:
-                        args = json.loads(func.get("arguments", "{}"))
-                    except json.JSONDecodeError:
+                    raw_args = func.get("arguments", "{}")
+                    if isinstance(raw_args, dict):
+                        args = raw_args
+                    elif isinstance(raw_args, str):
+                        try:
+                            args = json.loads(raw_args)
+                        except json.JSONDecodeError:
+                            args = {}
+                    else:
                         args = {}
 
                     tool_calls += 1
