@@ -19,6 +19,49 @@ from .tool_result_storage import TOOL_RESULT_CLEARED_MESSAGE
 
 log = logging.getLogger("tsunami.compression")
 
+# Compaction prompt with analysis scratchpad pattern:
+# The model writes <analysis> first (thinking through what matters),
+# then <summary> (the actual output). We strip <analysis> before
+# injecting into context — the model gets better summaries by
+# reasoning first, but the reasoning doesn't waste context tokens.
+COMPACT_SYSTEM_PROMPT = (
+    "CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.\n"
+    "Tool calls will be REJECTED and waste your only turn.\n\n"
+    "First write an <analysis> section where you think through what's important.\n"
+    "Then write a <summary> section with the actual structured summary.\n\n"
+    "The <analysis> is your scratchpad — it will be stripped from the output.\n"
+    "Only the <summary> content will be kept.\n\n"
+    "<summary> must contain these sections:\n"
+    "1. Primary Request and Intent: What the user asked for and why\n"
+    "2. Key Technical Concepts: Architecture decisions, patterns chosen\n"
+    "3. Files and Code Sections: File paths, line numbers, what changed\n"
+    "4. Errors and Fixes: What broke and how it was fixed\n"
+    "5. All User Messages: Key directives (critical for intent drift detection)\n"
+    "6. Pending Tasks: What still needs to be done\n"
+    "7. Current Work: What was being worked on RIGHT BEFORE this summary\n"
+    "8. Optional Next Step: Must align with recent explicit user requests\n\n"
+    "Be factual and specific. Include file paths, code snippets, and data points.\n"
+    "Do NOT include pleasantries, meta-commentary, or filler."
+)
+
+
+def strip_analysis_scratchpad(text: str) -> str:
+    """Strip <analysis>...</analysis> from compaction output.
+
+    The model reasons in <analysis> but only <summary> survives into context.
+    This gives better summaries without wasting context on reasoning.
+    """
+    import re
+    # Remove analysis block
+    text = re.sub(r'<analysis>.*?</analysis>', '', text, flags=re.DOTALL).strip()
+    # Extract summary content (remove tags)
+    match = re.search(r'<summary>(.*?)</summary>', text, flags=re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    # If no tags, return as-is (model didn't use the format)
+    return text.strip()
+
+
 # Rough token estimate: 1 token ≈ 4 chars for English text
 CHARS_PER_TOKEN = 4
 
@@ -161,27 +204,20 @@ async def compress_context(state: AgentState, model: LLMModel,
             messages=[
                 {
                     "role": "system",
-                    "content": (
-                        "CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.\n\n"
-                        "Summarize this agent conversation into a structured summary:\n\n"
-                        "1. Primary Request: What the user asked for\n"
-                        "2. Key Decisions: Technical choices, architecture decisions\n"
-                        "3. Files Modified: File paths and what changed\n"
-                        "4. Errors and Fixes: What broke and how it was fixed\n"
-                        "5. Current Work: What was being worked on RIGHT BEFORE this summary\n"
-                        "6. Pending Tasks: What still needs to be done\n\n"
-                        "Include file paths, code snippets, and specific details. "
-                        "Be factual and specific. Include file paths, URLs, and data points. "
-                        "Output only the summary, no preamble."
-                    ),
+                    "content": COMPACT_SYSTEM_PROMPT,
                 },
                 {"role": "user", "content": summary_text},
             ],
         )
 
-        summary = response.content
-        if not summary:
+        raw_summary = response.content
+        if not raw_summary:
             summary = f"[Compressed {len(to_compress)} messages — summary generation failed]"
+        else:
+            # Strip analysis scratchpad — only keep <summary> content
+            summary = strip_analysis_scratchpad(raw_summary)
+            if not summary:
+                summary = raw_summary  # fallback to raw if stripping removed everything
 
     except Exception as e:
         log.warning(f"Compression LLM call failed: {e}")
