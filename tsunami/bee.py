@@ -117,7 +117,16 @@ async def _execute_bee_tool(name: str, args: dict, workdir: str) -> str:
     """Execute a tool on behalf of a bee. Runs locally (not via LLM)."""
     if name == "file_read":
         path = args.get("path", "")
+        if not path or not isinstance(path, str):
+            return "Error: path parameter required (string)"
         p = Path(path) if Path(path).is_absolute() else Path(workdir) / path
+        # Sandbox: bees can only read within workdir
+        try:
+            resolved = str(p.resolve())
+            if not resolved.startswith(str(Path(workdir).resolve())):
+                return f"BLOCKED: bees can only read files within the project directory"
+        except (OSError, ValueError):
+            return f"Error: invalid path {path}"
         if not p.exists():
             return f"File not found: {path}"
         # Binary detection — check first 512 bytes for null bytes
@@ -130,9 +139,16 @@ async def _execute_bee_tool(name: str, args: dict, workdir: str) -> str:
         except OSError:
             pass
         # Size gate — skip huge files
-        if p.stat().st_size > 256 * 1024:
-            return f"File too large ({p.stat().st_size // 1024} KB). Use offset/limit or grep instead."
-        text = p.read_text(errors="replace")
+        try:
+            file_size = p.stat().st_size
+        except OSError:
+            return f"Cannot access: {path}"
+        if file_size > 256 * 1024:
+            return f"File too large ({file_size // 1024} KB). Use offset/limit or grep instead."
+        try:
+            text = p.read_text(errors="replace")
+        except (OSError, PermissionError) as e:
+            return f"Cannot read {path}: {e}"
         lines = text.splitlines()
         offset = args.get("offset", 0)
         limit = args.get("limit", 200)
@@ -141,6 +157,8 @@ async def _execute_bee_tool(name: str, args: dict, workdir: str) -> str:
 
     elif name == "shell_exec":
         cmd = args.get("command", "")
+        if not cmd or not isinstance(cmd, str):
+            return "Error: command parameter required (string)"
         # Bash security — bees get stricter checks than queen
         import re
         # Block any rm -rf on root or broad paths
@@ -171,6 +189,8 @@ async def _execute_bee_tool(name: str, args: dict, workdir: str) -> str:
 
     elif name == "match_grep":
         pattern = args.get("pattern", "")
+        if not pattern or not isinstance(pattern, str):
+            return "Error: pattern parameter required (string)"
         directory = args.get("directory", workdir)
         if not Path(directory).is_absolute():
             directory = str(Path(workdir) / directory)
