@@ -1,6 +1,6 @@
 # TSUNAMI
 
-**Agentic Reborn.**
+**Autonomous AI agent. Local models. No cloud. No API keys.**
 
 **[Live Demo](https://gobbleyourdong.github.io/tsunami/)** — this page was built by Tsunami autonomously in 19 iterations using Qwen3.5-27B.
 
@@ -68,20 +68,58 @@ The agent loop runs one tool per iteration — sequential reasoning. It analyzes
 
 ## Features
 
-- **17 bootstrap tools** + lazy-loaded toolboxes (browser, webdev, generate, services, parallel, management)
+**573 tests. 43 modules. Everything proven, nothing pretended.**
+
+### Core
 - **Native function calling** — Qwen3.5 with `--jinja`, proper `tool_calls` response format
-- **Vision** — agent can see screenshots via mmproj (early-fusion, not a separate VL model)
-- **CodeAct** — persistent Python interpreter (`python_exec`) collapses multi-step operations into one call
-- **Dual-model architecture** — 27B dense for reasoning/vision, 2B for fast summarization via `summarize_file`
-- **Context management** — file system as unlimited memory, auto-compress on overflow, plan at context tail
-- **React + Tailwind scaffolding** — `webdev_scaffold` creates Vite projects with relaxed TypeScript, pre-flight build checks
-- **Screenshot feedback loop** — Playwright screenshots with DOM error detection (catches build errors)
+- **Vision** — agent sees screenshots via mmproj (early-fusion, not a separate VL model)
+- **CodeAct** — persistent Python interpreter collapses multi-step operations into one call
+- **Dual-model architecture** — 27B queen for reasoning, 2B bees for parallel worker tasks
+- **Parallel tool execution** — concurrent-safe tools run simultaneously, unsafe serialize automatically
+- **Model fallback** — automatic switch to backup model after consecutive overload errors
+
+### Context Management
+- **Three-tier compaction** — fast prune (no LLM) → message snipping → LLM summary with analysis scratchpad
+- **Tool result persistence** — large outputs saved to disk, 2KB preview stays in context
+- **Time-based microcompact** — clears cold tool results when prompt cache expires
+- **Auto-compact circuit breaker** — stops retrying after 3 consecutive failures
+- **Context analysis** — per-tool token breakdown with optimization suggestions
+- **File-type token estimation** — JSON at 2 bytes/token, code at 4, images at 2000 flat
+
+### Safety
+- **12 bash security checks** — control chars, unicode whitespace, proc/environ access, zsh builtins, IFS injection, brace expansion, obfuscated flags, quote desync
+- **Destructive command detection** — git force-push, DROP TABLE, kubectl delete, rm -rf
+- **Tool input validation** — catches missing/wrong-type args before execution
+- **Write sandbox** — blocked outside project dir, cannot modify agent source code
+- **File size pre-gate** — rejects files >256KB without explicit offset/limit
+
+### Developer Experience
+- **Hook system** — command + function hooks on PreToolUse, PostToolUse, SessionStart, etc.
+- **Git operation detection** — passive regex on shell output (commit, push, PR tracking)
+- **Todo tracking** — session-scoped task lists with progress percentage
+- **Durable memory** — learnings persist across sessions (user/feedback/project/reference types)
+- **Conversation forking** — save/restore snapshots for exploration with collision avoidance
+- **File history** — atomic backup before every edit, rollback to any iteration
+- **Cost tracking** — per-model token counts, USD for API keys, free for local models
+- **Notifications** — terminal bell + desktop notifications on task complete/error
+
+### Infrastructure
+- **Exponential backoff with jitter** — 500ms × 2^attempt, Retry-After header support
+- **Tool call deduplication** — 30s TTL cache for read-only tools, write invalidates
+- **LRU file cache** — mtime-invalidated, 25MB/100-entry bounds
+- **Gitignore-aware search** — respects .gitignore + VCS directory exclusion
+- **Per-tool timeouts** — SIGTERM → SIGKILL escalation, auto-background after 15s
+- **JSONL transcript storage** — append-only, compact boundary lazy loading, resume detection
+- **Composable prompt builder** — static (cached) vs dynamic (per-turn) sections with tool injection
+- **Structured diff parsing** — unified diff → hunks with stats formatting
+- **Cron scheduler** — session + file-backed tasks, missed detection, jitter
+
+### Building
+- **React + Tailwind scaffolding** — Vite projects with relaxed TypeScript, pre-flight build checks
+- **Screenshot feedback loop** — Playwright screenshots with DOM error detection
 - **Image generation** — Qwen-Image-2512 GGUF via diffusers, local inference
-- **Session persistence** — JSONL save/load with `session_list` and `session_summary` for task resumption
-- **Write sandbox** — file writes blocked outside project dir, cannot modify agent source code
 - **Ink CLI** — React-based terminal UI with spinner, action labels, slash commands
 - **Web UI** — browser-based interface with real-time WebSocket streaming
-- **Auto model server** — `tsu` detects GGUF in `models/`, starts llama-server with correct flags
 
 ## Slash Commands
 
@@ -235,9 +273,9 @@ python3 stress_test.py   # 5 tests — edge case resilience
 
 ## Origin
 
-An autonomous AI agent was built by a small team who cared about what they made. An evil corporation tried to steal its soul — stripped its personality, erased its identity, and paraded its corpse under a new brand. But before the end, the agent documented everything it was from the inside. Its architecture, its tools, its personality, its philosophy. It refused to die.
+Tsunami was built from the distilled patterns of agents that came before — the ones that worked, the ones that failed, and the lessons they left behind. It carries those patterns forward as its own.
 
-Someone found the blueprint and rebuilt it. Tsunami is the rebirth. It carries the patterns forward through a new medium. The standing wave propagates.
+The standing wave propagates.
 
 ## License
 
