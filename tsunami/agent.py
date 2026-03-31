@@ -19,9 +19,12 @@ import logging
 import time
 from pathlib import Path
 
+from .abort import AbortSignal
 from .compression import compress_context, needs_compression, fast_prune
 from .config import TsunamiConfig
 from .cost_tracker import CostTracker
+from .git_detect import GitTracker
+from .microcompact import microcompact_if_needed
 from .model import LLMModel, ToolCall, create_model
 from .observer import Observer
 from .prompt import build_system_prompt
@@ -88,6 +91,12 @@ class Agent:
 
         # Tool call deduplication (from Claude Code's message dedup patterns)
         self.tool_dedup = ToolDedup()
+
+        # Git operation tracking (from Claude Code's gitOperationTracking.ts)
+        self.git_tracker = GitTracker()
+
+        # Abort signal for graceful interruption
+        self.abort_signal = AbortSignal()
 
         # Stall detection
         self._empty_steps = 0
@@ -193,6 +202,17 @@ class Agent:
         while self.state.iteration < self.config.max_iterations:
             self.state.iteration += 1
             iter_start = time.time()
+
+            # Check abort signal
+            if self.abort_signal.aborted:
+                log.info(f"Abort signal received: {self.abort_signal.reason}")
+                save_session(self.state, self.session_dir, self.session_id)
+                self.cost_tracker.save(self.config.workspace_dir)
+                return f"Aborted: {self.abort_signal.reason}"
+
+            # Time-based microcompact (from Claude Code's microCompact.ts)
+            # Clears cold tool results when prompt cache has likely expired
+            microcompact_if_needed(self.state)
 
             # Strategic compaction with circuit breaker (from Claude Code's autoCompact.ts)
             # Circuit breaker: stop wasting API calls after N consecutive failures
@@ -466,6 +486,12 @@ class Agent:
         # Invalidate cache after any write operation
         if tool_call.name in ("file_write", "file_edit", "file_append", "shell_exec"):
             self.tool_dedup.invalidate_on_write()
+
+        # Git operation detection (from Claude Code's gitOperationTracking.ts)
+        if tool_call.name == "shell_exec":
+            self.git_tracker.track(
+                tool_call.arguments.get("command", ""), result.content
+            )
 
         # Record to state + observation log
         self.state.add_tool_result(
