@@ -15,6 +15,7 @@ from .base import BaseTool, ToolResult
 class MatchGlob(BaseTool):
     name = "match_glob"
     description = "Find files by name and path patterns. The compass: locate what you need."
+    concurrent_safe = True
 
     def parameters_schema(self) -> dict:
         return {
@@ -55,6 +56,7 @@ class MatchGlob(BaseTool):
 class MatchGrep(BaseTool):
     name = "match_grep"
     description = "Search file contents by regex pattern. The metal detector: find signal buried in noise."
+    concurrent_safe = True
 
     def parameters_schema(self) -> dict:
         return {

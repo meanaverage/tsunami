@@ -95,6 +95,7 @@ class FileRead(BaseTool):
         "offset and limit parameters. When you already know which part of "
         "the file you need, only read that part."
     )
+    concurrent_safe = True  # read-only — safe to run in parallel
 
     def parameters_schema(self) -> dict:
         return {

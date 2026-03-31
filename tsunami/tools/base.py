@@ -28,6 +28,10 @@ class BaseTool(ABC):
 
     name: str = ""
     description: str = ""
+    # Concurrency safety flag (from Claude Code's StreamingToolExecutor)
+    # True = safe to run in parallel with other concurrent-safe tools
+    # False = must run exclusively (has side effects: writes, shell, etc.)
+    concurrent_safe: bool = False
 
     def __init__(self, config: TsunamiConfig):
         self.config = config
