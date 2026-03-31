@@ -175,6 +175,11 @@ async def _execute_bee_tool(name: str, args: dict, workdir: str) -> str:
         # Block process backgrounding (escape from timeout)
         if re.search(r'\bnohup\b|&\s*$|\bdisown\b', cmd):
             return "BLOCKED: bees cannot background processes"
+        # Block file writes via shell (redirects, sed -i, tee, dd, mv, cp, etc.)
+        if re.search(r'(?<!\|)\s*>\s*[^&]|>>', cmd):  # output redirect (not pipe)
+            return "BLOCKED: bees are read-only (cannot redirect output to files)"
+        if re.search(r'\bsed\s+.*-i\b|\btee\b|\bdd\b|\bmv\b|\bcp\b|\bmkdir\b|\btouch\b|\bchmod\b|\bchown\b|\binstall\b|\bln\b', cmd):
+            return "BLOCKED: bees are read-only (cannot modify filesystem via shell)"
         from .bash_security import is_command_safe
         from .tools.shell import _check_destructive
         destructive = _check_destructive(cmd)
