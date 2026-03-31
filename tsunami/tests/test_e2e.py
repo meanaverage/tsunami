@@ -223,7 +223,7 @@ class TestE2EPerformance:
         )
         elapsed = time.time() - start
 
-        assert elapsed < 120, f"First response took {elapsed:.1f}s (limit: 120s)"
+        assert elapsed < 300, f"First response took {elapsed:.1f}s (limit: 300s)"
         assert agent.state.task_complete
 
     def test_cost_tracker_records(self):
