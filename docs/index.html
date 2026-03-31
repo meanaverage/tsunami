@@ -9,14 +9,16 @@
     <link rel="stylesheet" crossorigin href="/tsunami/assets/index-Ct2waydA.css">
     <style>
       #hero {
-        background-image: url('/tsunami/images/hero-wave.png') !important;
-        background-size: cover !important;
-        background-position: center !important;
-        position: relative;
+        background-image: url('/tsunami/images/hero-wave.png');
+        background-size: cover;
+        background-position: center;
       }
-      #hero > * {
-        position: relative;
-        z-index: 1;
+      #hero::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: rgba(3, 7, 18, 0.65);
+        z-index: 0;
       }
     </style>
   </head>
