@@ -41,7 +41,7 @@ def _is_safe_write(p: Path, workspace_dir: str) -> str | None:
     deliverables = str(Path(workspace_dir) / "deliverables")
     if not resolved.startswith(deliverables):
         for config in protected_configs:
-            if filename == config or filename.startswith(config.split(".")[0]):
+            if filename == config:
                 return f"BLOCKED: Cannot modify {p.name} — config protection. Fix the code, not the config."
 
     return None
@@ -189,7 +189,28 @@ class FileEdit(BaseTool):
             content = p.read_text()
             count = content.count(old_text)
             if count == 0:
-                return ToolResult(f"Text not found in {path}", is_error=True)
+                # Fuzzy match: try stripping trailing whitespace from both
+                stripped_content = "\n".join(l.rstrip() for l in content.split("\n"))
+                stripped_old = "\n".join(l.rstrip() for l in old_text.split("\n"))
+                if stripped_content.count(stripped_old) == 1:
+                    # Found with whitespace normalization — do the replace on stripped
+                    new_content = stripped_content.replace(stripped_old, new_text, 1)
+                    p.write_text(new_content)
+                    return ToolResult(f"Edited {p}: replaced 1 occurrence (whitespace-normalized match)")
+
+                # Try with curly quote normalization
+                def normalize_quotes(s):
+                    return s.replace("\u2018", "'").replace("\u2019", "'").replace("\u201c", '"').replace("\u201d", '"')
+                norm_content = normalize_quotes(content)
+                norm_old = normalize_quotes(old_text)
+                if norm_content.count(norm_old) == 1:
+                    idx = norm_content.index(norm_old)
+                    actual = content[idx:idx+len(old_text)]
+                    new_content = content.replace(actual, new_text, 1)
+                    p.write_text(new_content)
+                    return ToolResult(f"Edited {p}: replaced 1 occurrence (quote-normalized match)")
+
+                return ToolResult(f"Text not found in {path}. Make sure old_text matches exactly (check whitespace and quotes).", is_error=True)
             if count > 1:
                 return ToolResult(
                     f"Ambiguous: '{old_text[:60]}...' found {count} times. Provide more context.",
