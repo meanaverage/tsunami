@@ -19,6 +19,7 @@ from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
 import re
 
+from ..docker_exec import docker_required, docker_requested, execute_python as execute_python_in_docker
 from .base import BaseTool, ToolResult
 
 log = logging.getLogger("tsunami.python_exec")
@@ -139,6 +140,17 @@ class PythonExec(BaseTool):
         ark_dir = str(Path(__file__).parent.parent.parent)
         exec_cwd = _execution_cwd()
         code = _normalize_project_prefixed_code(code, exec_cwd)
+
+        if docker_requested():
+            ok, output, reason = await asyncio.to_thread(execute_python_in_docker, code, exec_cwd, ark_dir)
+            if ok:
+                output = output.strip() or "(no output — code executed successfully)"
+                if len(output) > 8000:
+                    output = output[:8000] + "\n... [TRUNCATED]"
+                return ToolResult(f"{output}\n[exec mode: docker]".rstrip())
+            if docker_required():
+                return ToolResult(f"Docker execution required but unavailable: {reason or output}", is_error=True)
+
         prev_cwd = os.getcwd()
         os.chdir(exec_cwd)
         _namespace["ARK_DIR"] = ark_dir

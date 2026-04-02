@@ -12,6 +12,12 @@ import shutil
 from pathlib import Path
 
 from ..config import resolve_aux_model_endpoint
+from ..docker_exec import (
+    docker_required,
+    docker_requested,
+    execute_browser as execute_browser_in_docker,
+    run_shell as run_shell_in_docker,
+)
 from .base import BaseTool, ToolResult
 
 SCREENSHOT_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
@@ -262,13 +268,26 @@ export default function App() {
 }
 ''')
 
-        # Install deps
-        subprocess.run(["npm", "install"], cwd=str(project_dir),
-                       capture_output=True, text=True, timeout=120)
+        install_mode = "host"
+        if docker_requested():
+            out, err, returncode, reason = await run_shell_in_docker("npm install", str(project_dir), 120)
+            if reason is None:
+                install_mode = "docker"
+                if returncode != 0:
+                    return ToolResult(f"Scaffolded files but npm install failed: {(err or out)[:300]}", is_error=True)
+            elif docker_required():
+                return ToolResult(f"Scaffolded files but Docker execution failed: {reason}", is_error=True)
+            else:
+                subprocess.run(["npm", "install"], cwd=str(project_dir),
+                               capture_output=True, text=True, timeout=120)
+        else:
+            subprocess.run(["npm", "install"], cwd=str(project_dir),
+                           capture_output=True, text=True, timeout=120)
 
         return ToolResult(
             f"Scaffolded {name} (manual fallback) at {project_dir}\n"
             f"Stack: Vite + React + TypeScript + Tailwind CSS\n"
+            f"Execution sandbox: {install_mode}\n"
             f"Run: npm install && npm run dev"
         )
 
@@ -308,18 +327,61 @@ class WebdevServe(BaseTool):
             # Check if package.json exists (React project)
             if (project_dir / "package.json").exists():
                 # Pre-flight: type-check for import errors
-                tsc_result = subprocess.run(
-                    ["npx", "tsc", "--noEmit", "--pretty"],
-                    cwd=str(project_dir),
-                    capture_output=True, text=True, timeout=30,
-                )
+                sandbox_mode = "host"
+                tsc_stdout = ""
+                if docker_requested():
+                    tsc_stdout, tsc_stderr, tsc_returncode, reason = await run_shell_in_docker(
+                        "npx tsc --noEmit --pretty",
+                        str(project_dir),
+                        30,
+                    )
+                    if reason is None:
+                        sandbox_mode = "docker"
+                    elif docker_required():
+                        return ToolResult(f"Docker execution required but unavailable: {reason}", is_error=True)
+                    else:
+                        tsc_result = subprocess.run(
+                            ["npx", "tsc", "--noEmit", "--pretty"],
+                            cwd=str(project_dir),
+                            capture_output=True, text=True, timeout=30,
+                        )
+                        tsc_stdout = tsc_result.stdout
+                        tsc_returncode = tsc_result.returncode
+                else:
+                    tsc_result = subprocess.run(
+                        ["npx", "tsc", "--noEmit", "--pretty"],
+                        cwd=str(project_dir),
+                        capture_output=True, text=True, timeout=30,
+                    )
+                    tsc_stdout = tsc_result.stdout
+                    tsc_returncode = tsc_result.returncode
                 build_warnings = ""
-                if tsc_result.returncode != 0:
+                if tsc_returncode != 0:
                     # Extract just the error lines (not the full output)
-                    errors = [l for l in tsc_result.stdout.split("\n")
+                    errors = [l for l in tsc_stdout.split("\n")
                               if "error TS" in l or "Cannot find" in l or "not found" in l][:5]
                     if errors:
                         build_warnings = "\n⚠️ BUILD WARNINGS:\n" + "\n".join(errors) + "\nFix these before screenshotting.\n"
+
+                if sandbox_mode == "docker":
+                    start_cmd = (
+                        f"pkill -f 'vite.*--port {port}' >/dev/null 2>&1 || true; "
+                        f"nohup npm run dev -- --host 0.0.0.0 --port {port} "
+                        f"> /tmp/tsunami-vite-{project_name}-{port}.log 2>&1 & echo $!"
+                    )
+                    out, err, returncode, reason = await run_shell_in_docker(start_cmd, str(project_dir), 20)
+                    if reason is None and returncode == 0:
+                        await asyncio.sleep(3)
+                        pid_text = out.strip().splitlines()[-1] if out.strip() else "docker"
+                        return ToolResult(
+                            f"Dev server running at http://localhost:{port}\n"
+                            f"PID: {pid_text}\n"
+                            + build_warnings +
+                            f"Execution sandbox: docker\n"
+                            f"Use webdev_screenshot to see the page."
+                        )
+                    if docker_required():
+                        return ToolResult(f"Docker execution required but unavailable: {reason or err}", is_error=True)
 
                 # Kill any existing dev server on this port
                 subprocess.run(["fuser", "-k", f"{port}/tcp"],
@@ -328,7 +390,7 @@ class WebdevServe(BaseTool):
 
                 # Start vite dev server in background
                 proc = subprocess.Popen(
-                    ["npm", "run", "dev", "--", "--port", str(port)],
+                    ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", str(port)],
                     cwd=str(project_dir),
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 )
@@ -338,6 +400,7 @@ class WebdevServe(BaseTool):
                     f"Dev server running at http://localhost:{port}\n"
                     f"PID: {proc.pid}\n"
                     + build_warnings +
+                    f"Execution sandbox: host\n"
                     f"Use webdev_screenshot to see the page."
                 )
             else:
@@ -407,16 +470,47 @@ class WebdevScreenshot(BaseTool):
                       output_path: str = "screenshot.png",
                       full_page: bool = True,
                       width: int = 1440, height: int = 900, **kw) -> ToolResult:
+        ws = Path(self.config.workspace_dir)
+        normalized_output_path, path_note = normalize_screenshot_output_path(output_path)
+        out = Path(normalized_output_path)
+        if not out.is_absolute():
+            out = ws / out
+        out.parent.mkdir(parents=True, exist_ok=True)
+
+        if docker_requested():
+            ok, result, reason = await asyncio.to_thread(
+                execute_browser_in_docker,
+                "screenshot",
+                {
+                    "url": url,
+                    "output_path": str(out),
+                    "full_page": full_page,
+                    "width": width,
+                    "height": height,
+                    "headless": True,
+                },
+            )
+            if ok:
+                screenshot = result if isinstance(result, dict) else {}
+                error_text = screenshot.get("error_text")
+                size_kb = screenshot.get("size_kb", out.stat().st_size // 1024 if out.exists() else 0)
+                result_msg = f"Screenshot saved to {out} ({size_kb}KB)\nURL: {url}\nViewport: {width}x{height}\n"
+                if path_note:
+                    result_msg = f"{path_note}\n{result_msg}"
+                if error_text:
+                    result_msg += f"\n⚠️ BUILD ERROR DETECTED:\n{error_text}\n\nFix the error in the source file and screenshot again."
+                else:
+                    vision_feedback = await self._analyze_screenshot(str(out))
+                    if vision_feedback:
+                        result_msg += f"\n📸 VISUAL ANALYSIS:\n{vision_feedback}"
+                    else:
+                        result_msg += "No errors detected."
+                return ToolResult(result_msg)
+            if docker_required():
+                return ToolResult(f"Docker browser execution required but unavailable: {reason or result}", is_error=True)
+
         try:
             from playwright.async_api import async_playwright
-
-            # Resolve output path
-            ws = Path(self.config.workspace_dir)
-            normalized_output_path, path_note = normalize_screenshot_output_path(output_path)
-            out = Path(normalized_output_path)
-            if not out.is_absolute():
-                out = ws / out
-            out.parent.mkdir(parents=True, exist_ok=True)
 
             async with async_playwright() as p:
                 browser = await p.chromium.launch(headless=True)

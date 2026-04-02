@@ -13,11 +13,11 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from ..docker_exec import docker_required, docker_requested, run_shell as run_shell_in_docker
 from .base import BaseTool, ToolResult
 
 log = logging.getLogger("tsunami.tools.project_init")
 
-# Scaffold directory — the CDN
 SCAFFOLDS_DIR = Path(__file__).parent.parent.parent / "scaffolds"
 
 
@@ -34,11 +34,9 @@ def _pick_scaffold(name: str, dependencies: list[str]) -> str:
         "showcase", "brochure", "about", "splash",
     )
 
-    # Prefer presentation scaffolds before decorative "three" pushes us into game mode.
     if presentation and (SCAFFOLDS_DIR / "landing").exists():
         return "landing"
 
-    # 3D game/simulation. A lone "three" dependency is not enough for business sites.
     if (
         needs("pinball", "fps", "voxel", "r3f", "rapier", "cannon", "physics")
         or (needs("three", "3d") and not presentation)
@@ -46,22 +44,18 @@ def _pick_scaffold(name: str, dependencies: list[str]) -> str:
         if (SCAFFOLDS_DIR / "threejs-game").exists():
             return "threejs-game"
 
-    # 2D game
     if needs("pixi", "2d", "sprite", "platformer", "arcade", "tetris", "snake", "pong", "matter"):
         if (SCAFFOLDS_DIR / "pixijs-game").exists():
             return "pixijs-game"
 
-    # Any game defaults to 2D unless stronger 3D signals exist.
     if needs("game"):
         if (SCAFFOLDS_DIR / "pixijs-game").exists():
             return "pixijs-game"
 
-    # Realtime / collaboration
     if needs("chat", "realtime", "live", "multiplayer", "websocket", "socket", "notification", "collab", "sync"):
         if (SCAFFOLDS_DIR / "realtime").exists():
             return "realtime"
 
-    # Persistence / backend
     if needs(
         "database", "login", "auth", "account", "persist", "save", "crud",
         "backend", "api", "server", "express", "sqlite", "todo", "saas",
@@ -70,26 +64,21 @@ def _pick_scaffold(name: str, dependencies: list[str]) -> str:
         if (SCAFFOLDS_DIR / "fullstack").exists():
             return "fullstack"
 
-    # File handling / spreadsheets
     if needs("upload", "file", "xlsx", "csv", "excel", "spreadsheet", "import", "export", "pdf", "document", "parse", "diff", "sheet"):
         if (SCAFFOLDS_DIR / "form-app").exists():
             return "form-app"
 
-    # Dashboard (sidebar + charts + tables)
     if needs("dashboard", "dash", "admin", "panel", "monitor"):
         if (SCAFFOLDS_DIR / "dashboard").exists():
             return "dashboard"
 
-    # Data visualization (charts, graphs, d3 — no sidebar)
     if needs("chart", "analytics", "metrics", "stats", "graph", "visualiz", "report", "recharts", "d3", "plot", "data"):
         if (SCAFFOLDS_DIR / "data-viz").exists():
             return "data-viz"
 
-    # Presentation fallback if not already selected.
     if presentation and (SCAFFOLDS_DIR / "landing").exists():
         return "landing"
 
-    # Default: minimal React app
     if (SCAFFOLDS_DIR / "react-app").exists():
         return "react-app"
 
@@ -252,21 +241,67 @@ class ProjectInit(BaseTool):
                     "- Keep edits scoped to the active project.\n"
                 )
 
-            result = subprocess.run(
-                ["npm", "install"],
-                cwd=str(project_dir),
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            if result.returncode != 0:
-                return ToolResult(f"Project created but npm install failed: {result.stderr[:300]}", is_error=True)
+            install_mode = "host"
+            if docker_requested():
+                out, err, returncode, reason = await run_shell_in_docker("npm install", str(project_dir), 120)
+                if reason is None:
+                    install_mode = "docker"
+                    if returncode != 0:
+                        return ToolResult(
+                            f"Project created but npm install failed: {(err or out)[:300]}",
+                            is_error=True,
+                        )
+                elif docker_required():
+                    return ToolResult(f"Project created but Docker execution failed: {reason}", is_error=True)
+                else:
+                    result = subprocess.run(
+                        ["npm", "install"],
+                        cwd=str(project_dir),
+                        capture_output=True,
+                        text=True,
+                        timeout=120,
+                    )
+                    if result.returncode != 0:
+                        return ToolResult(
+                            f"Project created but npm install failed: {result.stderr[:300]}",
+                            is_error=True,
+                        )
+            else:
+                result = subprocess.run(
+                    ["npm", "install"],
+                    cwd=str(project_dir),
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                if result.returncode != 0:
+                    return ToolResult(
+                        f"Project created but npm install failed: {result.stderr[:300]}",
+                        is_error=True,
+                    )
 
-            try:
-                from ..serve import serve_project
-                url = serve_project(str(project_dir))
-            except Exception:
-                url = ""
+            url = ""
+            serve_mode = install_mode
+            if install_mode == "docker":
+                start_cmd = (
+                    "pkill -f 'vite.*--port 9876' >/dev/null 2>&1 || true; "
+                    "nohup npm run dev -- --host 0.0.0.0 --port 9876 "
+                    f"> /tmp/tsunami-vite-{name}-9876.log 2>&1 & echo $!"
+                )
+                out, err, returncode, reason = await run_shell_in_docker(start_cmd, str(project_dir), 20)
+                if reason is None and returncode == 0:
+                    url = "http://localhost:9876"
+                elif docker_required():
+                    return ToolResult(f"Project created but Docker dev server failed: {reason or err}", is_error=True)
+                else:
+                    serve_mode = "host"
+
+            if serve_mode == "host":
+                try:
+                    from ..serve import serve_project
+                    url = serve_project(str(project_dir))
+                except Exception:
+                    url = ""
 
             scaffold_info = f" (scaffold: {scaffold_name})" if scaffold_name else ""
             dep_list = ", ".join(dependencies) if dependencies else "none"
@@ -281,6 +316,7 @@ class ProjectInit(BaseTool):
                 f"Project root: ./workspace/deliverables/{name}\n"
                 f"Context file: ./workspace/deliverables/{name}/tsunami.md\n"
                 f"Extra deps: {dep_list}\n"
+                f"Execution sandbox: {serve_mode}\n"
                 f"Dev server: {url or 'run npx vite --port 9876'}\n\n"
                 f"src/App.tsx is a stub — replace it with your app.\n"
                 f"Write components in src/components/.\n"

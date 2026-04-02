@@ -129,6 +129,7 @@ async def index():
 @app.get("/api/health")
 async def health():
     cfg = get_config()
+    backend_mode = "docker" if os.environ.get("TSUNAMI_IN_DOCKER", "").strip().lower() in ("1", "true", "yes", "on") else "host"
     watcher_ok = None
     watcher_error = None
     model_error = None
@@ -154,6 +155,7 @@ async def health():
     return {
         "status": "ok",
         "backend_ok": True,
+        "backend_mode": backend_mode,
         "model_endpoint": cfg.model_endpoint,
         "model_ok": model_ok,
         "model_name": cfg.model_name,

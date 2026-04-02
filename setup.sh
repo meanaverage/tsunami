@@ -8,7 +8,8 @@
 #
 # Defaults:
 # - installs Python deps into ./.venv
-# - installs Playwright + Chromium for browser/screenshot tools unless INSTALL_PLAYWRIGHT=0
+# - builds the Docker execution image when Docker is present unless BUILD_DOCKER_EXEC=0
+# - installs Playwright + Chromium on the host only when Docker sandboxing is unavailable or disabled
 # - pins llama.cpp to a repo-selected release tag unless overridden
 # - verifies model downloads against a repo-shipped manifest
 # - does not edit shell rc files unless INSTALL_SHELL_ALIAS=1
@@ -40,6 +41,8 @@ MODEL_MANIFEST="${MODEL_MANIFEST:-$DIR/models/model-manifest.lock}"
 INSTALL_SHELL_ALIAS="${INSTALL_SHELL_ALIAS:-0}"
 ALLOW_UNPINNED_NPM="${ALLOW_UNPINNED_NPM:-0}"
 INSTALL_PLAYWRIGHT="${INSTALL_PLAYWRIGHT:-1}"
+BUILD_DOCKER_EXEC="${BUILD_DOCKER_EXEC:-1}"
+TSUNAMI_DOCKER_IMAGE="${TSUNAMI_DOCKER_IMAGE:-tsunami-exec:latest}"
 
 if [ -n "${TSUNAMI_DIR:-}" ] && [ "$(cd -- "$TSUNAMI_DIR" 2>/dev/null && pwd -P || true)" != "$DIR" ]; then
   echo "TSUNAMI_DIR must point at this checked-out repo: $DIR" >&2
@@ -216,8 +219,34 @@ install_playwright_runtime() {
     return
   fi
 
+  if [ "$BUILD_DOCKER_EXEC" = "1" ] && command -v docker >/dev/null 2>&1; then
+    echo "  - skipping host Playwright install: Docker sandbox will provide browser runtime"
+    return
+  fi
+
   echo "  - installing Playwright Chromium runtime"
+  "$VENV_DIR/bin/python" -m pip install --require-virtualenv playwright
   "$VENV_DIR/bin/python" -m playwright install chromium
+}
+
+install_docker_exec_image() {
+  if [ "$BUILD_DOCKER_EXEC" != "1" ]; then
+    echo "  - skipping Docker exec image build: BUILD_DOCKER_EXEC=0"
+    return
+  fi
+
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "  - skipping Docker exec image build: docker not present"
+    return
+  fi
+
+  if [ ! -f "$DIR/docker/exec.Dockerfile" ]; then
+    echo "Docker exec image requested but missing Dockerfile: $DIR/docker/exec.Dockerfile" >&2
+    exit 1
+  fi
+
+  echo "  - building Docker exec image: $TSUNAMI_DOCKER_IMAGE"
+  docker build -t "$TSUNAMI_DOCKER_IMAGE" -f "$DIR/docker/exec.Dockerfile" "$DIR"
 }
 
 install_node_deps() {
@@ -449,6 +478,10 @@ echo "Installing browser runtime"
 install_playwright_runtime
 
 echo ""
+echo "Preparing Docker sandbox"
+install_docker_exec_image
+
+echo ""
 echo "Installing CLI dependencies"
 install_node_deps
 
@@ -481,3 +514,4 @@ echo "Setup complete"
 echo "  ./tsu"
 echo "  INSTALL_SHELL_ALIAS=1 ./setup.sh    # optional alias"
 echo "  INSTALL_PLAYWRIGHT=0 ./setup.sh     # opt out of browser runtime install"
+echo "  BUILD_DOCKER_EXEC=0 ./setup.sh      # opt out of Docker exec image build"

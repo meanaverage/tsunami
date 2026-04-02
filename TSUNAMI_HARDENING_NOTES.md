@@ -35,7 +35,7 @@ This now replaces the original "best effort" installer with a usable in-repo har
 - optional diffusion/image-generation extras, if you want those bundled into setup too
 - the legacy `tsu update` path, if you want runtime updates to be ref-pinned too
 
-The core local setup path is now pinned and verified, including browser automation for the built-in screenshot and browser tools.
+The core local setup path is now pinned and verified. If Docker is available, setup builds the local execution sandbox image and keeps browser automation there; otherwise it falls back to a host-side Playwright install for the screenshot and browser tools.
 
 ## Example usage
 

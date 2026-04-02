@@ -23,7 +23,9 @@ you type a prompt. tsunami does the rest.
 - **"build a 3D pinball game"** → researches Three.js patterns, builds 869 lines, tests every key binding
 - **"analyze these 500 files"** → dispatches parallel workers, reads everything, synthesizes findings
 
-no cloud. no api keys. no docker. everything runs locally on your hardware.
+no cloud. no api keys. everything runs locally on your hardware.
+
+by default, the model stays on the host for performance, and Tsunami can run its backend and tool execution inside Docker when Docker is available.
 
 ---
 
@@ -101,11 +103,37 @@ runs on any nvidia gpu with 12GB+ vram. macs with 16GB+ unified memory. no cloud
 ## setup notes
 
 - `setup.sh` is the supported installer. it replaces the old best-effort bootstrap flow.
-- `setup.sh` now installs Playwright and the Chromium runtime as part of the standard local setup, so browser inspection and screenshots work out of the box.
+- the supported runtime split is:
+  - host: `llama-server`, model files, GPU / Metal acceleration
+  - docker: Tsunami backend, `shell_exec`, `python_exec`, npm/dev servers, browser automation
+- if `docker` is present, `setup.sh` builds the local execution sandbox image.
+- when the Docker path is active, the container only mounts `./workspace` from the host. the model still stays local and is reached over `http://host.docker.internal:8090`.
+- if Docker is unavailable or disabled, `setup.sh` falls back to installing Playwright and Chromium on the host for browser inspection and screenshots.
 - `INSTALL_SHELL_ALIAS=1 ./setup.sh` adds a `tsunami` alias to your shell rc if you want it.
-- `INSTALL_PLAYWRIGHT=0 ./setup.sh` opts out of the browser runtime install if you explicitly want a smaller setup.
+- `INSTALL_PLAYWRIGHT=0 ./setup.sh` opts out of the host browser runtime install when you explicitly want a smaller non-Docker setup.
+- `BUILD_DOCKER_EXEC=0 ./setup.sh` opts out of the Docker sandbox image build.
 - if `node` and `npm` are present, setup installs the ink cli with `npm ci` from the tracked `cli/package-lock.json`.
 - the python repl path is still the fallback when node is unavailable.
+
+## docker mode
+
+if you want the hardened path explicitly:
+
+```bash
+TSUNAMI_DOCKER_BACKEND=1 ./tsu
+```
+
+that keeps:
+- the local model on the host
+- the Tsunami backend in Docker
+- tool execution and browser automation in Docker
+- only `./workspace` shared between host and container
+
+if you want to disable Docker entirely:
+
+```bash
+TSUNAMI_DOCKER_BACKEND=0 TSUNAMI_DOCKER_EXEC=0 ./tsu
+```
 
 ---
 

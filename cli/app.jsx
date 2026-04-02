@@ -80,6 +80,33 @@ function compactHome(rawPath) {
   return rawPath;
 }
 
+function attachmentStoreDir() {
+  return path.resolve(ARK_DIR, 'workspace/.attachments');
+}
+
+function stageAttachment(rawPath) {
+  const resolvedPath = path.resolve(expandHome(rawPath));
+  if (!fs.existsSync(resolvedPath)) {
+    return { ok: false, message: `File not found: ${rawPath}` };
+  }
+  const stat = fs.statSync(resolvedPath);
+  if (!stat.isFile()) {
+    return { ok: false, message: `Only files can be attached: ${rawPath}` };
+  }
+
+  const relativeWorkspace = path.relative(path.resolve(ARK_DIR, 'workspace'), resolvedPath);
+  if (!relativeWorkspace.startsWith('..') && !path.isAbsolute(relativeWorkspace)) {
+    return { ok: true, stagedPath: resolvedPath, staged: false };
+  }
+
+  const storeDir = attachmentStoreDir();
+  fs.mkdirSync(storeDir, { recursive: true });
+  const safeName = path.basename(resolvedPath).replace(/[^a-zA-Z0-9._-]/g, '_');
+  const stagedPath = path.join(storeDir, `${Date.now()}-${safeName}`);
+  fs.copyFileSync(resolvedPath, stagedPath);
+  return { ok: true, stagedPath, staged: true };
+}
+
 function parseCommand(text) {
   const trimmed = text.trim();
   const firstSpace = trimmed.indexOf(' ');
@@ -423,16 +450,22 @@ function App({ serverUrl, singleTask }) {
   }, [input, attachedFiles]);
 
   function addAttachedFile(rawPath) {
-    const resolvedPath = path.resolve(expandHome(rawPath));
+    const staged = stageAttachment(rawPath);
     const currentAttachedFiles = attachedFilesRef.current;
-    if (!fs.existsSync(resolvedPath)) {
-      return { ok: false, message: `File not found: ${rawPath}` };
+    if (!staged.ok) {
+      return staged;
     }
+    const resolvedPath = staged.stagedPath;
     if (currentAttachedFiles.includes(resolvedPath)) {
       return { ok: false, message: `Already attached: ${path.basename(resolvedPath)}` };
     }
     updateAttachedFiles(prev => [...prev, resolvedPath]);
-    return { ok: true, message: `Attached: ${path.basename(resolvedPath)}` };
+    return {
+      ok: true,
+      message: staged.staged
+        ? `Attached: ${path.basename(rawPath)} (staged into workspace)`
+        : `Attached: ${path.basename(resolvedPath)}`,
+    };
   }
 
   function removeAttachedFile(rawTarget) {
@@ -447,6 +480,11 @@ function App({ serverUrl, singleTask }) {
         return { ok: false, message: 'No attached files.' };
       }
       const removedCount = currentAttachedFiles.length;
+      for (const filePath of currentAttachedFiles) {
+        if (filePath.startsWith(`${attachmentStoreDir()}${path.sep}`) && fs.existsSync(filePath)) {
+          try { fs.unlinkSync(filePath); } catch {}
+        }
+      }
       updateAttachedFiles([]);
       return { ok: true, message: `Removed ${removedCount} attached ${removedCount === 1 ? 'file' : 'files'}.` };
     }
@@ -454,6 +492,9 @@ function App({ serverUrl, singleTask }) {
     const index = Number.parseInt(target, 10);
     if (Number.isInteger(index) && String(index) === target && index >= 1 && index <= currentAttachedFiles.length) {
       const removed = currentAttachedFiles[index - 1];
+      if (removed.startsWith(`${attachmentStoreDir()}${path.sep}`) && fs.existsSync(removed)) {
+        try { fs.unlinkSync(removed); } catch {}
+      }
       updateAttachedFiles(prev => prev.filter((_, i) => i !== index - 1));
       return { ok: true, message: `Removed: ${path.basename(removed)}` };
     }
@@ -465,6 +506,9 @@ function App({ serverUrl, singleTask }) {
     ));
     if (exactMatches.length === 1) {
       const match = exactMatches[0];
+      if (match.startsWith(`${attachmentStoreDir()}${path.sep}`) && fs.existsSync(match)) {
+        try { fs.unlinkSync(match); } catch {}
+      }
       updateAttachedFiles(prev => prev.filter(filePath => filePath !== match));
       return { ok: true, message: `Removed: ${path.basename(match)}` };
     }
@@ -475,6 +519,9 @@ function App({ serverUrl, singleTask }) {
     const basenameMatches = currentAttachedFiles.filter(filePath => path.basename(filePath) === target);
     if (basenameMatches.length === 1) {
       const match = basenameMatches[0];
+      if (match.startsWith(`${attachmentStoreDir()}${path.sep}`) && fs.existsSync(match)) {
+        try { fs.unlinkSync(match); } catch {}
+      }
       updateAttachedFiles(prev => prev.filter(filePath => filePath !== match));
       return { ok: true, message: `Removed: ${path.basename(match)}` };
     }
@@ -911,6 +958,7 @@ function TraceTailView({ entries, cols }) {
 
 function StatusView({ connected, health }) {
   const backendOk = connected && health?.backend_ok !== false;
+  const backendMode = health?.backend_mode;
   const modelOk = Boolean(health?.model_ok);
   const watcherEnabled = Boolean(health?.watcher_enabled);
   const watcherOk = health?.watcher_ok;
@@ -919,6 +967,12 @@ function StatusView({ connected, health }) {
     <Box flexDirection="column" marginLeft={2}>
       <Box>
         <Text color={backendOk ? 'green' : 'red'}>backend {backendOk ? 'ready' : 'down'}</Text>
+        {backendMode && (
+          <>
+            <Text dimColor> · </Text>
+            <Text dimColor>{backendMode}</Text>
+          </>
+        )}
         <Text dimColor> · </Text>
         <Text color={modelOk ? 'green' : 'red'}>
           wave {modelOk ? 'ready' : 'down'}
@@ -976,6 +1030,7 @@ const args = process.argv.slice(2);
 let task = null;
 let wsPort = 3000;
 const attachFiles = [];
+const attachErrors = [];
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--task' && args[i + 1]) task = args[++i];
@@ -984,9 +1039,18 @@ for (let i = 0; i < args.length; i++) {
 }
 
 if (task && attachFiles.length > 0) {
-  for (const filePath of attachFiles) {
-    task += `\n[Attached file: ${filePath}]`;
+  for (const rawPath of attachFiles) {
+    const staged = stageAttachment(rawPath);
+    if (!staged.ok) {
+      attachErrors.push(staged.message);
+      continue;
+    }
+    task += `\n[Attached file: ${staged.stagedPath}]`;
   }
+}
+
+for (const message of attachErrors) {
+  process.stderr.write(`[attach] ${message}\n`);
 }
 
 const serverUrl = `ws://localhost:${wsPort}/ws`;

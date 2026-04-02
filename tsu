@@ -6,6 +6,11 @@ if [ ! -x "$PYTHON_BIN" ]; then
   PYTHON_BIN="$(command -v python3 || true)"
 fi
 
+TSUNAMI_DOCKER_BACKEND="${TSUNAMI_DOCKER_BACKEND:-auto}"
+TSUNAMI_DOCKER_IMAGE="${TSUNAMI_DOCKER_IMAGE:-tsunami-exec:latest}"
+TSUNAMI_DOCKER_ROOT="${TSUNAMI_DOCKER_ROOT:-/workspace/tsunami}"
+STARTED_DOCKER_BACKEND=0
+
 if [ -z "$PYTHON_BIN" ]; then
   echo "python3 not found. Run ./setup.sh first." >&2
   exit 1
@@ -26,6 +31,84 @@ detect_ram_gb() {
     return
   fi
   echo 0
+}
+
+docker_backend_requested() {
+  case "$TSUNAMI_DOCKER_BACKEND" in
+    0|false|no|off|disabled) return 1 ;;
+    *) command -v docker >/dev/null 2>&1 ;;
+  esac
+}
+
+docker_container_name() {
+  local digest
+  if command -v sha1sum >/dev/null 2>&1; then
+    digest="$(printf '%s' "$DIR" | sha1sum | awk '{print substr($1,1,12)}')"
+  else
+    digest="$(printf '%s' "$DIR" | shasum | awk '{print substr($1,1,12)}')"
+  fi
+  printf 'tsunami-exec-%s' "$digest"
+}
+
+docker_container_running() {
+  docker inspect -f '{{.State.Running}}' "$(docker_container_name)" 2>/dev/null | grep -q '^true$'
+}
+
+ensure_docker_image() {
+  if docker image inspect "$TSUNAMI_DOCKER_IMAGE" >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "  building Docker backend image: $TSUNAMI_DOCKER_IMAGE"
+  docker build -t "$TSUNAMI_DOCKER_IMAGE" -f "$DIR/docker/exec.Dockerfile" "$DIR"
+}
+
+docker_port_publish_args() {
+  local port args=()
+  args+=(-p 3000:3000)
+
+  for port in 4173 5173 8000 8080 9876; do
+    if lsof -ti "tcp:${port}" >/dev/null 2>&1; then
+      echo "  docker backend: leaving host port :${port} untouched (already in use)" >&2
+      continue
+    fi
+    args+=(-p "${port}:${port}")
+  done
+
+  printf '%s\n' "${args[@]}"
+}
+
+start_docker_backend() {
+  local container_name backend_model_endpoint backend_bee_endpoint
+  local -a port_args
+  local port_arg
+  container_name="$(docker_container_name)"
+  ensure_docker_image || return 1
+  docker rm -f "$container_name" >/dev/null 2>&1 || true
+
+  backend_model_endpoint="http://host.docker.internal:8090"
+  backend_bee_endpoint="http://host.docker.internal:${BEE_ENDPOINT##*:}"
+  while IFS= read -r port_arg; do
+    [ -n "$port_arg" ] && port_args+=("$port_arg")
+  done < <(docker_port_publish_args)
+
+  docker run -d --rm \
+    --name "$container_name" \
+    --add-host host.docker.internal:host-gateway \
+    "${port_args[@]}" \
+    -v "$DIR/workspace:$TSUNAMI_DOCKER_ROOT/workspace" \
+    -e TSUNAMI_IN_DOCKER=1 \
+    -e TSUNAMI_DOCKER_EXEC=0 \
+    -e TSUNAMI_WORKSPACE="$TSUNAMI_DOCKER_ROOT/workspace" \
+    -e TSUNAMI_MODEL_ENDPOINT="$backend_model_endpoint" \
+    -e TSUNAMI_WATCHER_ENDPOINT="$backend_bee_endpoint" \
+    -e TSUNAMI_BEE_ENDPOINT="$backend_bee_endpoint" \
+    -e TSUNAMI_MAX_TOKENS="${TSUNAMI_MAX_TOKENS:-1024}" \
+    "$TSUNAMI_DOCKER_IMAGE" \
+    python3 -c "from tsunami.server import start_server; start_server(host='0.0.0.0', port=3000)" \
+    >/tmp/tsunami_docker_backend.log 2>&1 || return 1
+
+  STARTED_DOCKER_BACKEND=1
+  return 0
 }
 
 wait_for_health() {
@@ -268,7 +351,17 @@ export TSUNAMI_BEE_ENDPOINT="$BEE_ENDPOINT"
 
 # Start Python WebSocket backend if not running
 BACKEND_READY=0
-if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
+if docker_backend_requested; then
+  if curl -sf http://localhost:3000/api/health > /dev/null 2>&1 && ! docker_container_running; then
+    if [ -f /tmp/tsunami_server.pid ]; then
+      EXISTING_SERVER_PID="$(cat /tmp/tsunami_server.pid 2>/dev/null || true)"
+      if [ -n "$EXISTING_SERVER_PID" ]; then
+        kill "$EXISTING_SERVER_PID" 2>/dev/null || true
+        sleep 1
+      fi
+    fi
+  fi
+elif curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
   # If a stale backend is running without WebSocket support, stop it so this launcher
   # can restart the server from the current virtualenv.
   if [ -f /tmp/tsunami_server.pid ]; then
@@ -281,20 +374,33 @@ if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
 fi
 
 if ! curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
-  "$PYTHON_BIN" -c "
+  if docker_backend_requested; then
+    echo "  starting tsunami backend in Docker on :3000"
+    if start_docker_backend; then
+      for i in $(seq 1 20); do
+        if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
+          BACKEND_READY=1
+          break
+        fi
+        sleep 0.5
+      done
+    fi
+  else
+    "$PYTHON_BIN" -c "
 import sys; sys.path.insert(0,'$DIR')
 from tsunami.server import start_server
 start_server(host='0.0.0.0', port=3000)
 " > /tmp/tsunami_server.log 2>&1 &
-  SERVER_PID=$!
-  echo "$SERVER_PID" > /tmp/tsunami_server.pid
-  for i in $(seq 1 10); do
-    if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
-      BACKEND_READY=1
-      break
-    fi
-    sleep 0.5
-  done
+    SERVER_PID=$!
+    echo "$SERVER_PID" > /tmp/tsunami_server.pid
+    for i in $(seq 1 10); do
+      if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
+        BACKEND_READY=1
+        break
+      fi
+      sleep 0.5
+    done
+  fi
 else
   BACKEND_READY=1
 fi
@@ -303,6 +409,9 @@ cleanup() {
   [ -n "${SERVER_PID:-}" ] && kill "$SERVER_PID" 2>/dev/null
   [ -n "${MODEL_PID:-}" ] && kill "$MODEL_PID" 2>/dev/null
   [ -n "${BEE_PID:-}" ] && kill "$BEE_PID" 2>/dev/null
+  if [ "$STARTED_DOCKER_BACKEND" = "1" ]; then
+    docker rm -f "$(docker_container_name)" >/dev/null 2>&1 || true
+  fi
 }
 trap cleanup EXIT
 
