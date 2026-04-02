@@ -15,6 +15,7 @@ import logging
 import re
 from typing import Any
 
+from ..docker_exec import docker_required, docker_requested, execute_browser as execute_browser_in_docker
 from .base import BaseTool, ToolResult
 
 log = logging.getLogger("tsunami.browser")
@@ -45,6 +46,18 @@ async def _ensure_browser(headless: bool = True):
     )
     _page = await context.new_page()
     return _page
+
+
+async def _maybe_execute_in_docker(action: str, payload: dict) -> ToolResult | None:
+    if not docker_requested():
+        return None
+
+    ok, result, reason = await asyncio.to_thread(execute_browser_in_docker, action, payload)
+    if ok:
+        return ToolResult(str(result))
+    if docker_required():
+        return ToolResult(f"Docker browser execution required but unavailable: {reason or result}", is_error=True)
+    return None
 
 
 async def _get_page_elements(page) -> str:
@@ -104,6 +117,12 @@ class BrowserNavigate(BaseTool):
         }
 
     async def execute(self, url: str, wait_for: str = "", **kw) -> ToolResult:
+        docker_result = await _maybe_execute_in_docker(
+            "navigate",
+            {"url": url, "wait_for": wait_for, "headless": self.config.browser_headless},
+        )
+        if docker_result is not None:
+            return docker_result
         try:
             page = await _ensure_browser(self.config.browser_headless)
             response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
@@ -129,6 +148,12 @@ class BrowserView(BaseTool):
         return {"type": "object", "properties": {}}
 
     async def execute(self, **kw) -> ToolResult:
+        docker_result = await _maybe_execute_in_docker(
+            "view",
+            {"headless": self.config.browser_headless},
+        )
+        if docker_result is not None:
+            return docker_result
         try:
             page = await _ensure_browser(self.config.browser_headless)
             url = page.url
@@ -163,6 +188,12 @@ class BrowserClick(BaseTool):
         }
 
     async def execute(self, index: int, **kw) -> ToolResult:
+        docker_result = await _maybe_execute_in_docker(
+            "click",
+            {"index": index, "headless": self.config.browser_headless},
+        )
+        if docker_result is not None:
+            return docker_result
         try:
             page = await _ensure_browser(self.config.browser_headless)
 
@@ -203,6 +234,12 @@ class BrowserInput(BaseTool):
         }
 
     async def execute(self, index: int, text: str, press_enter: bool = False, **kw) -> ToolResult:
+        docker_result = await _maybe_execute_in_docker(
+            "input",
+            {"index": index, "text": text, "press_enter": press_enter, "headless": self.config.browser_headless},
+        )
+        if docker_result is not None:
+            return docker_result
         try:
             page = await _ensure_browser(self.config.browser_headless)
 
@@ -256,6 +293,12 @@ class BrowserScroll(BaseTool):
         }
 
     async def execute(self, direction: str = "down", amount: int = 500, **kw) -> ToolResult:
+        docker_result = await _maybe_execute_in_docker(
+            "scroll",
+            {"direction": direction, "amount": amount, "headless": self.config.browser_headless},
+        )
+        if docker_result is not None:
+            return docker_result
         try:
             page = await _ensure_browser(self.config.browser_headless)
             delta = amount if direction == "down" else -amount
@@ -281,6 +324,12 @@ class BrowserFindKeyword(BaseTool):
         }
 
     async def execute(self, keyword: str, **kw) -> ToolResult:
+        docker_result = await _maybe_execute_in_docker(
+            "find",
+            {"keyword": keyword, "headless": self.config.browser_headless},
+        )
+        if docker_result is not None:
+            return docker_result
         try:
             page = await _ensure_browser(self.config.browser_headless)
             text = await _extract_markdown(page)
@@ -326,6 +375,12 @@ class BrowserConsoleExec(BaseTool):
         }
 
     async def execute(self, script: str, **kw) -> ToolResult:
+        docker_result = await _maybe_execute_in_docker(
+            "console",
+            {"script": script, "headless": self.config.browser_headless},
+        )
+        if docker_result is not None:
+            return docker_result
         try:
             page = await _ensure_browser(self.config.browser_headless)
             result = await page.evaluate(script)
@@ -359,6 +414,12 @@ class BrowserFillForm(BaseTool):
         }
 
     async def execute(self, fields: list[dict], **kw) -> ToolResult:
+        docker_result = await _maybe_execute_in_docker(
+            "fill_form",
+            {"fields": fields, "headless": self.config.browser_headless},
+        )
+        if docker_result is not None:
+            return docker_result
         try:
             page = await _ensure_browser(self.config.browser_headless)
             elements = await page.query_selector_all(
@@ -402,6 +463,12 @@ class BrowserPressKey(BaseTool):
         }
 
     async def execute(self, key: str, **kw) -> ToolResult:
+        docker_result = await _maybe_execute_in_docker(
+            "press_key",
+            {"key": key, "headless": self.config.browser_headless},
+        )
+        if docker_result is not None:
+            return docker_result
         try:
             page = await _ensure_browser(self.config.browser_headless)
             await page.keyboard.press(key)
@@ -425,6 +492,12 @@ class BrowserSelectOption(BaseTool):
         }
 
     async def execute(self, index: int, value: str, **kw) -> ToolResult:
+        docker_result = await _maybe_execute_in_docker(
+            "select",
+            {"index": index, "value": value, "headless": self.config.browser_headless},
+        )
+        if docker_result is not None:
+            return docker_result
         try:
             page = await _ensure_browser(self.config.browser_headless)
             elements = await page.query_selector_all(
@@ -469,6 +542,12 @@ class BrowserSaveImage(BaseTool):
         }
 
     async def execute(self, save_path: str, url: str = "screenshot", **kw) -> ToolResult:
+        docker_result = await _maybe_execute_in_docker(
+            "save_image",
+            {"save_path": save_path, "url": url, "headless": self.config.browser_headless},
+        )
+        if docker_result is not None:
+            return docker_result
         try:
             from pathlib import Path
             page = await _ensure_browser(self.config.browser_headless)
@@ -505,6 +584,12 @@ class BrowserUploadFile(BaseTool):
         }
 
     async def execute(self, index: int, file_path: str, **kw) -> ToolResult:
+        docker_result = await _maybe_execute_in_docker(
+            "upload",
+            {"index": index, "file_path": file_path, "headless": self.config.browser_headless},
+        )
+        if docker_result is not None:
+            return docker_result
         try:
             from pathlib import Path
             page = await _ensure_browser(self.config.browser_headless)
@@ -537,6 +622,9 @@ class BrowserClose(BaseTool):
         return {"type": "object", "properties": {}}
 
     async def execute(self, **kw) -> ToolResult:
+        docker_result = await _maybe_execute_in_docker("close", {})
+        if docker_result is not None:
+            return docker_result
         global _browser, _page
         try:
             if _browser:

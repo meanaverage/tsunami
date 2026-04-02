@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import platform
 import subprocess
+import os
 from pathlib import Path
 
 from .state import AgentState
@@ -111,4 +112,6 @@ def _gather_environment() -> str:
         parts.append(f"Hostname: {result.stdout.strip()}")
     except Exception:
         pass
+    docker_mode = os.environ.get("TSUNAMI_DOCKER_EXEC", "auto")
+    parts.append(f"Execution sandbox: docker={docker_mode}")
     return "\n".join(parts)

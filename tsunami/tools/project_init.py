@@ -13,6 +13,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from ..docker_exec import docker_required, docker_requested, run_shell as run_shell_in_docker
 from .base import BaseTool, ToolResult
 
 log = logging.getLogger("tsunami.tools.project_init")
@@ -208,24 +209,64 @@ class ProjectInit(BaseTool):
                     "- Keep edits scoped to the active project.\n"
                 )
 
-            # npm install
-            result = subprocess.run(
-                ["npm", "install"],
-                cwd=str(project_dir),
-                capture_output=True, text=True, timeout=120,
-            )
-            if result.returncode != 0:
-                return ToolResult(
-                    f"Project created but npm install failed: {result.stderr[:300]}",
-                    is_error=True,
+            install_mode = "host"
+            if docker_requested():
+                out, err, returncode, reason = await run_shell_in_docker("npm install", str(project_dir), 120)
+                if reason is None:
+                    install_mode = "docker"
+                    if returncode != 0:
+                        return ToolResult(
+                            f"Project created but npm install failed: {(err or out)[:300]}",
+                            is_error=True,
+                        )
+                elif docker_required():
+                    return ToolResult(f"Project created but Docker execution failed: {reason}", is_error=True)
+                else:
+                    result = subprocess.run(
+                        ["npm", "install"],
+                        cwd=str(project_dir),
+                        capture_output=True, text=True, timeout=120,
+                    )
+                    if result.returncode != 0:
+                        return ToolResult(
+                            f"Project created but npm install failed: {result.stderr[:300]}",
+                            is_error=True,
+                        )
+            else:
+                result = subprocess.run(
+                    ["npm", "install"],
+                    cwd=str(project_dir),
+                    capture_output=True, text=True, timeout=120,
                 )
+                if result.returncode != 0:
+                    return ToolResult(
+                        f"Project created but npm install failed: {result.stderr[:300]}",
+                        is_error=True,
+                    )
 
             # Start dev server
-            try:
-                from ..serve import serve_project
-                url = serve_project(str(project_dir))
-            except Exception:
-                url = ""
+            url = ""
+            serve_mode = install_mode
+            if install_mode == "docker":
+                start_cmd = (
+                    "pkill -f 'vite.*--port 9876' >/dev/null 2>&1 || true; "
+                    "nohup npm run dev -- --host 0.0.0.0 --port 9876 "
+                    f"> /tmp/tsunami-vite-{name}-9876.log 2>&1 & echo $!"
+                )
+                out, err, returncode, reason = await run_shell_in_docker(start_cmd, str(project_dir), 20)
+                if reason is None and returncode == 0:
+                    url = "http://localhost:9876"
+                elif docker_required():
+                    return ToolResult(f"Project created but Docker dev server failed: {reason or err}", is_error=True)
+                else:
+                    serve_mode = "host"
+
+            if serve_mode == "host":
+                try:
+                    from ..serve import serve_project
+                    url = serve_project(str(project_dir))
+                except Exception:
+                    url = ""
 
             scaffold_info = f" (from '{scaffold_name}' scaffold)" if scaffold_name else ""
             dep_list = ", ".join(dependencies) if dependencies else "none"
@@ -234,6 +275,7 @@ class ProjectInit(BaseTool):
                 f"Project root: ./workspace/deliverables/{name}\n"
                 f"Context file: ./workspace/deliverables/{name}/tsunami.md\n"
                 f"Extra deps: {dep_list}\n"
+                f"Execution sandbox: {serve_mode}\n"
                 f"Dev server: {url or 'run npx vite --port 9876'}\n\n"
                 f"src/App.tsx is a stub — replace it with your app.\n"
                 f"Write components in src/components/.\n"

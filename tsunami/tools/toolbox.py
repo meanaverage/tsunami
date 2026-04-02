@@ -11,6 +11,7 @@ import importlib.util
 import logging
 from pathlib import Path
 
+from ..docker_exec import docker_available, docker_requested
 from .base import BaseTool, ToolResult
 
 log = logging.getLogger("tsunami.toolbox")
@@ -19,7 +20,12 @@ _registry = None
 
 
 def _playwright_available() -> bool:
-    return importlib.util.find_spec("playwright") is not None
+    if importlib.util.find_spec("playwright") is not None:
+        return True
+    if docker_requested():
+        available, _ = docker_available()
+        return available
+    return False
 
 
 def set_registry(registry):

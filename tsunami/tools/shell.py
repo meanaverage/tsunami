@@ -63,6 +63,12 @@ import os
 import signal
 from pathlib import Path
 
+from ..docker_exec import (
+    docker_required,
+    docker_requested,
+    run_shell as run_shell_in_docker,
+    start_background_shell as start_background_shell_in_docker,
+)
 from .base import BaseTool, ToolResult
 
 log = logging.getLogger("tsunami.shell")
@@ -140,6 +146,43 @@ class ShellExec(BaseTool):
                         cwd = candidate
                     # else: keep repo-root default cwd
 
+            if docker_requested():
+                if timeout == 0:
+                    proc, reason = await start_background_shell_in_docker(command, cwd)
+                    if proc is not None:
+                        sid = _next_session_id()
+                        _sessions[sid] = proc
+                        _session_output[sid] = ""
+                        return ToolResult(
+                            f"Background Docker process started: {sid} (PID {proc.pid})\n"
+                            f"Use shell_view to check output, shell_wait to await completion, "
+                            f"shell_kill to terminate."
+                        )
+                    if docker_required():
+                        return ToolResult(f"Docker execution required but unavailable: {reason}", is_error=True)
+                else:
+                    stdout, stderr, returncode, reason = await run_shell_in_docker(command, cwd, timeout)
+                    if reason is None:
+                        out = stdout.strip()
+                        err = stderr.strip()
+                        max_chars = 10000
+                        if len(out) > max_chars:
+                            total_lines = out.count('\n') + 1
+                            truncated_part = out[:max_chars]
+                            remaining_lines = out[max_chars:].count('\n') + 1
+                            out = f"{truncated_part}\n\n... [{remaining_lines} lines truncated, {total_lines} total] ..."
+
+                        parts = []
+                        if out:
+                            parts.append(out)
+                        if err:
+                            parts.append(f"[stderr] {err}")
+                        parts.append(f"[exit code: {returncode}]")
+                        parts.append("[exec mode: docker]")
+                        return ToolResult("\n".join(parts), is_error=returncode != 0)
+                    if docker_required():
+                        return ToolResult(f"Docker execution required but unavailable: {reason}", is_error=True)
+
             proc = await asyncio.create_subprocess_shell(
                 command,
                 stdout=asyncio.subprocess.PIPE,
@@ -181,6 +224,8 @@ class ShellExec(BaseTool):
             if err:
                 parts.append(f"[stderr] {err}")
             parts.append(f"[exit code: {proc.returncode}]")
+            if docker_requested():
+                parts.append("[exec mode: host fallback]")
 
             return ToolResult("\n".join(parts), is_error=proc.returncode != 0)
         except Exception as e:

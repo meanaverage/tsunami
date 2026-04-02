@@ -1,0 +1,14 @@
+.git
+.venv
+models
+llama.cpp
+workspace
+cli/node_modules
+cli/dist
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.gguf
+*.safetensors
+.DS_Store
