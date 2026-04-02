@@ -2,8 +2,19 @@
 
 **an ai agent that runs on your computer. tell it what to build, it builds it.**
 
+this fork is a personal build of the original [gobbleyourdong/tsunami](https://github.com/gobbleyourdong/tsunami), focused first on:
+- macOS as the primary development target
+- a hardened local setup flow
+- a Docker-backed execution surface for the backend and tools
+
+the intended runtime split in this fork is:
+- host: `llama-server`, model files, Metal / GPU acceleration
+- docker: Tsunami backend, tool execution, npm/dev servers, browser automation
+
+credit to the original repo for the core agent architecture, naming, scaffolds, and project direction. this fork builds on that base rather than replacing it.
+
 ```bash
-git clone https://github.com/gobbleyourdong/tsunami.git
+git clone https://github.com/meanaverage/tsunami.git
 cd tsunami
 ./setup.sh
 ./tsu
@@ -25,7 +36,7 @@ you type a prompt. tsunami does the rest.
 
 no cloud. no api keys. everything runs locally on your hardware.
 
-by default, the model stays on the host for performance, and Tsunami can run its backend and tool execution inside Docker when Docker is available.
+in this fork, the default target is a local model on the host for performance, with Tsunami's backend and tool execution able to run inside Docker when Docker is available.
 
 ---
 
@@ -172,7 +183,20 @@ tsunami auto-detects and uses the biggest model available.
 
 ## origin
 
-tsunami was built from the distilled patterns of agents that came before — the ones that worked, the ones that failed, and the lessons they left behind.
+this repository is a fork of the original [gobbleyourdong/tsunami](https://github.com/gobbleyourdong/tsunami).
+
+the original project established the core Tsunami ideas:
+- the wave / eddy / swell / undertow model
+- the local-first autonomous agent direction
+- the scaffolded build workflow
+
+this fork adds and emphasizes:
+- a hardened checked-out-repo installer
+- pinned dependency and model-manifest flows
+- mac-first runtime testing
+- a Docker-backed execution surface while keeping the local model on the host
+
+tsunami itself was built from the distilled patterns of agents that came before — the ones that worked, the ones that failed, and the lessons they left behind.
 
 the standing wave propagates.
 
