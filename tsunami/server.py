@@ -341,12 +341,24 @@ async def run_agent_with_streaming(ws: WebSocket, task: str):
     # Run the agent
     try:
         result = await agent.run(task)
-        await ws.send_text(json.dumps({
-            "type": "complete",
-            "result": result[:5000] if result else "",
+        delivered = agent.state.task_complete
+        payload = {
             "iterations": agent.state.iteration,
             "timestamp": time.time(),
-        }))
+        }
+
+        if delivered:
+            payload.update({
+                "type": "complete",
+                "result": result[:5000] if result else "",
+            })
+        else:
+            payload.update({
+                "type": "error",
+                "message": result[:5000] if result else "Agent stopped without delivering a result.",
+            })
+
+        await ws.send_text(json.dumps(payload))
     except Exception as e:
         await ws.send_text(json.dumps({
             "type": "error",

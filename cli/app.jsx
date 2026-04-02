@@ -290,7 +290,11 @@ function App({ serverUrl, singleTask }) {
       if (msg.type === 'error') {
         setRunning(false);
         setCurrentAction(null);
-        setMessages(prev => [...prev, { type: 'error', text: msg.message }]);
+        setMessages(prev => [...prev, {
+          type: 'error',
+          text: msg.message,
+          iters: msg.iteration ?? msg.iterations,
+        }]);
       }
     });
 
@@ -742,8 +746,13 @@ function MessageView({ msg, cols }) {
 
   if (msg.type === 'error') {
     return (
-      <Box marginLeft={2} marginTop={1}>
-        <Text color="red">ERR {msg.text}</Text>
+      <Box flexDirection="column" marginLeft={2} marginTop={1}>
+        <Text color="red" wrap="wrap">ERR {msg.text}</Text>
+        {msg.iters && (
+          <Box marginTop={0}>
+            <Text color="redBright">Failed after {msg.iters} {msg.iters === 1 ? 'iteration' : 'iterations'}</Text>
+          </Box>
+        )}
       </Box>
     );
   }
