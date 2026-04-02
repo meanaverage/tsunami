@@ -55,15 +55,13 @@ def _is_safe_write(p: Path, workspace_dir: str) -> str | None:
 
 
 def _resolve_path(path: str, workspace_dir: str) -> Path:
-    """Resolve a file path.
+    """Resolve a file path to an absolute path inside the workspace.
 
-    If the path is relative (doesn't start with / or ~), resolve it
-    relative to the workspace directory. This ensures the agent writes
-    files into the workspace, not the process CWD.
-
-    Also strips redundant workspace prefix to avoid double-nesting
-    (e.g., model writes "workspace/deliverables/x" which would become
-    "workspace/workspace/deliverables/x" without this fix).
+    Handles all the weird ways the 9B writes paths:
+    - ./workspace/deliverables/x/file.tsx
+    - workspace/deliverables/x/file.tsx
+    - deliverables/x/file.tsx
+    - /absolute/path/to/file.tsx
     """
     normalized = path
     if normalized.startswith("/workspace/tsunami/workspace/"):
