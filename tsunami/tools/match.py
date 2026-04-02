@@ -199,7 +199,10 @@ class MatchGrep(BaseTool):
                 result = subprocess.run(cmd, cwd=root, capture_output=True, text=True, timeout=30)
                 lines = result.stdout.strip().splitlines()
             else:
-                regex = re.compile(pattern)
+                try:
+                    regex = re.compile(pattern)
+                except re.error as exc:
+                    return ToolResult(f"Invalid regex: {exc}", is_error=True)
                 matched: list[str] = []
                 candidate_pattern = file_pattern or "**/*"
                 seen: set[Path] = set()
@@ -227,7 +230,6 @@ class MatchGrep(BaseTool):
                     if len(matched) >= limit:
                         break
                 lines = matched
-
             if not lines:
                 return ToolResult(f"No matches for '{pattern}' in {root}")
 

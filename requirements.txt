@@ -7,6 +7,7 @@ rich>=13.0             # CLI output formatting
 fastapi>=0.110.0       # Backend API + WebSocket server for the Ink CLI
 uvicorn>=0.29.0        # ASGI server for the backend
 websockets>=15.0.0     # WebSocket transport for uvicorn/FastAPI
+psutil>=5.9.0          # Cross-platform memory/process queries (scaling, port management)
 
 # Optional host fallback — browser automation
 # setup.sh installs this only when Docker sandboxing is unavailable or disabled.

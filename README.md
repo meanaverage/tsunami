@@ -15,7 +15,7 @@ credit to the original repo for the core agent architecture, naming, scaffolds, 
 
 sync status:
 - this fork is intended to stay close to the original repo, not diverge into a separate product
-- in our view, it currently includes the upstream `main` functionality through commit `ea43925` ("Plan complete — 28 UI components, 9 scaffolds, everything verified", April 2, 2026)
+- in our view, it currently includes the upstream `main` functionality through commit `0a7a24c` ("Streaming bridge — tool calls flow to UI in real time", April 2, 2026)
 - the main differences are the personal-build concerns here: mac-first testing, hardened setup/install flow, and a Docker-backed execution surface
 
 ```bash
@@ -28,6 +28,22 @@ cd tsunami
 that's the default path now. setup runs from a checked-out repo, installs into `./.venv`, verifies model downloads from `models/model-manifest.lock`, and keeps shell alias changes opt-in.
 
 `./tsu` is the app launcher. it starts the local model server if needed, starts the Tsunami backend, and opens the terminal UI.
+
+upstream also now has a Windows-first installer path. if you are using this fork on Windows and want the PowerShell entry point, the equivalent flow is:
+
+**Windows:**
+
+```powershell
+irm https://raw.githubusercontent.com/meanaverage/tsunami/main/setup.ps1 | iex
+# restart PowerShell, then:
+tsunami
+```
+
+> **Windows prerequisites:** [Git](https://git-scm.com/download/win), [Python 3.10+](https://python.org/downloads/), [cmake](https://cmake.org/download/), and [Visual Studio Build Tools 2019–2022](https://visualstudio.microsoft.com/visual-cpp-build-tools/) (for llama.cpp CUDA build). The installer checks for these and guides you if anything's missing.
+>
+> **CUDA users:** CUDA 12.x/13.x requires **Visual Studio 2019 or 2022**. VS 2026 (Preview/Insider) is not yet supported by nvcc — the installer detects this and automatically selects VS 2022 if both are present.
+>
+> Run the installer from a regular PowerShell terminal (not a Developer Command Prompt). The script sets up the build environment automatically.
 
 **[see it work →](https://gobbleyourdong.github.io/tsunami/)**
 
@@ -116,7 +132,7 @@ tsunami auto-detects your memory and configures itself. you never think about th
 
 the full stack is **10GB total**: 9B wave (5.3GB) + 2B eddies (1.8GB) + SD-Turbo image gen (2GB).
 
-runs on any nvidia gpu with 12GB+ vram. macs with 16GB+ unified memory. no cloud required.
+runs on any nvidia gpu with 12GB+ vram. macs with 16GB+ unified memory. windows, linux, and mac. no cloud required.
 
 ## setup notes
 
@@ -256,7 +272,26 @@ the installer gives you everything. if you want a bigger brain later:
 huggingface-cli download unsloth/Qwen3.5-27B-GGUF Qwen3.5-27B-Q8_0.gguf --local-dir models
 ```
 
+```powershell
+# Windows — 27B wave (32GB+ systems)
+huggingface-cli download unsloth/Qwen3.5-27B-GGUF Qwen3.5-27B-Q8_0.gguf --local-dir models
+```
+
 tsunami auto-detects and uses the biggest model available.
+
+---
+
+## contributing
+
+this codebase is under heavy active development. multiple files change per day. PRs against core files (`agent.py`, `prompt.py`, `tools/`, `undertow.py`) will likely conflict within hours.
+
+**best approach:**
+1. open an issue first to discuss what you want to change
+2. target isolated new files (new scaffolds, new tools, new tests) that don't overlap with the core
+3. keep PRs small and focused — one feature per PR
+4. expect rebases — the main branch moves fast
+
+we read every PR and incorporate good ideas even if we can't merge directly. your contribution shapes the direction.
 
 ---
 
