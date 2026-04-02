@@ -5,18 +5,21 @@ import TextInput from 'ink-text-input';
 import Spinner from 'ink-spinner';
 import WebSocket from 'ws';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { execSync, spawn } from 'child_process';
 import { fileURLToPath } from 'url';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ARK_DIR = path.resolve(__dirname, '..');
+const HOME_DIR = os.homedir();
 
-// ── Banner: white froth → deep blue water ──
+// Banner: white froth -> deep blue water
 const BANNER_LINES = [
   { text: '▀▛▘▞▀▖▌ ▌▙ ▌▞▀▖▙▗▌▜▘', color: '#ffffff' },
-  { text: ' ▌ ▚▄ ▌ ▌▌▌▌▙▄▌▌▘▌▐',  color: '#b0d4f1' },
-  { text: ' ▌ ▖ ▌▌ ▌▌▝▌▌ ▌▌ ▌▐',  color: '#4a9eff' },
+  { text: ' ▌ ▚▄ ▌ ▌▌▌▌▙▄▌▌▘▌▐', color: '#b0d4f1' },
+  { text: ' ▌ ▖ ▌▌ ▌▌▝▌▌ ▌▌ ▌▐', color: '#4a9eff' },
   { text: ' ▘ ▝▀ ▝▀ ▘ ▘▘ ▘▘ ▘▀▘', color: '#1a5ab8' },
 ];
 
@@ -29,6 +32,15 @@ const TOOL_LABELS = {
   plan_advance: 'Advance plan',
 };
 
+const COMMANDS = [
+  { cmd: '/project', desc: 'list / switch / create projects', takesArgs: true },
+  { cmd: '/serve', desc: 'host active project on localhost', takesArgs: true },
+  { cmd: '/attach', desc: 'attach a file or image', takesArgs: true },
+  { cmd: '/unattach', desc: 'remove an attached file', takesArgs: true },
+  { cmd: '/detach', desc: 'alias for /unattach', takesArgs: true },
+  { cmd: '/help', desc: 'show all commands', takesArgs: false },
+];
+
 function toolLabel(name, args) {
   const base = TOOL_LABELS[name] || name.replace(/_/g, ' ');
   const detail = args?.command || args?.path || args?.query || args?.pattern || args?.url || '';
@@ -38,18 +50,174 @@ function toolLabel(name, args) {
 function timeAgo(start) {
   const s = Math.floor((Date.now() - start) / 1000);
   if (s < 60) return `${s}s`;
-  return `${Math.floor(s/60)}m ${s%60}s`;
+  return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
 function humanSize(bytes) {
-  for (const u of ['B', 'KB', 'MB', 'GB']) {
-    if (bytes < 1024) return `${bytes.toFixed(0)}${u}`;
+  for (const unit of ['B', 'KB', 'MB', 'GB']) {
+    if (bytes < 1024) return `${bytes.toFixed(0)}${unit}`;
     bytes /= 1024;
   }
   return `${bytes.toFixed(1)}TB`;
 }
 
-// ── Main App ──
+function expandHome(rawPath) {
+  if (!rawPath) return process.cwd();
+  if (rawPath === '~') return HOME_DIR;
+  if (rawPath.startsWith('~/') || rawPath.startsWith('~\\')) {
+    return path.join(HOME_DIR, rawPath.slice(2));
+  }
+  if (path.isAbsolute(rawPath)) return rawPath;
+  return path.resolve(process.cwd(), rawPath);
+}
+
+function compactHome(rawPath) {
+  if (!rawPath) return rawPath;
+  if (rawPath === HOME_DIR) return '~';
+  if (rawPath.startsWith(`${HOME_DIR}${path.sep}`)) {
+    return `~${path.sep}${rawPath.slice(HOME_DIR.length + 1)}`;
+  }
+  return rawPath;
+}
+
+function parseCommand(text) {
+  const trimmed = text.trim();
+  const firstSpace = trimmed.indexOf(' ');
+  if (firstSpace === -1) {
+    return { cmd: trimmed.toLowerCase(), argText: '', argWords: [] };
+  }
+
+  const cmd = trimmed.slice(0, firstSpace).toLowerCase();
+  const argText = trimmed.slice(firstSpace + 1).trim();
+  return { cmd, argText, argWords: argText ? argText.split(/\s+/) : [] };
+}
+
+function sortEntries(entries) {
+  return entries.sort((a, b) => {
+    if (a.isDirectory() !== b.isDirectory()) {
+      return a.isDirectory() ? -1 : 1;
+    }
+    return a.name.localeCompare(b.name);
+  });
+}
+
+function makeCommandSuggestions(input) {
+  const normalized = input.toLowerCase();
+  return COMMANDS
+    .filter(command => command.cmd.startsWith(normalized))
+    .map(command => ({
+      kind: 'command',
+      value: command.takesArgs ? `${command.cmd} ` : command.cmd,
+      label: command.cmd,
+      desc: command.desc,
+    }));
+}
+
+function makePathSuggestions(rawPath) {
+  if (!rawPath) return [];
+
+  const separator = rawPath.includes('\\') ? '\\' : path.sep;
+  const trailingSeparator = /[\\/]+$/.test(rawPath);
+  let baseInput = '';
+  let resolvedDir = process.cwd();
+  let prefix = '';
+
+  if (rawPath === '~') {
+    baseInput = `~${separator}`;
+    resolvedDir = HOME_DIR;
+  } else if (trailingSeparator) {
+    baseInput = rawPath;
+    resolvedDir = expandHome(rawPath);
+  } else {
+    const lastSlash = Math.max(rawPath.lastIndexOf('/'), rawPath.lastIndexOf('\\'));
+    if (lastSlash >= 0) {
+      baseInput = rawPath.slice(0, lastSlash + 1);
+      prefix = rawPath.slice(lastSlash + 1);
+      resolvedDir = expandHome(baseInput);
+    } else {
+      prefix = rawPath;
+    }
+  }
+
+  try {
+    const entries = sortEntries(fs.readdirSync(resolvedDir, { withFileTypes: true }))
+      .filter(entry => entry.name.toLowerCase().startsWith(prefix.toLowerCase()));
+
+    return entries.map(entry => {
+      const suffix = entry.isDirectory() ? separator : '';
+      const completed = `${baseInput}${entry.name}${suffix}`;
+      return {
+        kind: 'path',
+        value: completed,
+        label: completed,
+        desc: entry.isDirectory() ? 'directory' : 'file',
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
+function makeDetachSuggestions(argText, attachedFiles) {
+  const query = argText.trim().toLowerCase();
+  const results = attachedFiles
+    .map((filePath, index) => ({
+      filePath,
+      display: compactHome(filePath),
+      basename: path.basename(filePath),
+      index,
+    }))
+    .filter(file => {
+      if (!query) return true;
+      return (
+        file.basename.toLowerCase().startsWith(query) ||
+        file.display.toLowerCase().startsWith(query) ||
+        file.display.toLowerCase().includes(query)
+      );
+    })
+    .map(file => ({
+      kind: 'detach',
+      value: `/unattach ${file.display}`,
+      label: file.display,
+      desc: `attached #${file.index + 1}`,
+    }));
+
+  if ('all'.startsWith(query)) {
+    results.unshift({
+      kind: 'detach',
+      value: '/unattach all',
+      label: 'all',
+      desc: 'remove every attached file',
+    });
+  }
+
+  return results;
+}
+
+function makeSuggestions(input, attachedFiles) {
+  if (!input.startsWith('/')) return [];
+
+  const trimmed = input.trim();
+  const hasArgs = /\s/.test(trimmed);
+  if (!hasArgs && !input.endsWith(' ')) {
+    return makeCommandSuggestions(trimmed);
+  }
+
+  const { cmd, argText } = parseCommand(input);
+  if (cmd === '/attach') {
+    return makePathSuggestions(argText).map(suggestion => ({
+      ...suggestion,
+      value: `/attach ${suggestion.value}`,
+    }));
+  }
+
+  if (cmd === '/unattach' || cmd === '/detach') {
+    return makeDetachSuggestions(argText, attachedFiles);
+  }
+
+  return [];
+}
+
 function App({ serverUrl, singleTask }) {
   const { exit } = useApp();
   const { stdout } = useStdout();
@@ -63,6 +231,10 @@ function App({ serverUrl, singleTask }) {
   const [startTime, setStartTime] = useState(null);
   const [currentAction, setCurrentAction] = useState(null);
   const [attachedFiles, setAttachedFiles] = useState([]);
+  const [suggestions, setSuggestions] = useState([]);
+  const [selectedSuggestion, setSelectedSuggestion] = useState(0);
+  const [activeProject, setActiveProject] = useState(null);
+  const [inputVersion, setInputVersion] = useState(0);
   const wsRef = useRef(null);
 
   useEffect(() => {
@@ -71,7 +243,7 @@ function App({ serverUrl, singleTask }) {
     ws.on('open', () => setConnected(true));
     ws.on('close', () => setConnected(false));
 
-    ws.on('message', (data) => {
+    ws.on('message', data => {
       const msg = JSON.parse(data.toString());
 
       if (msg.type === 'start') {
@@ -83,7 +255,7 @@ function App({ serverUrl, singleTask }) {
 
       if (msg.type === 'step') {
         setIteration(msg.iteration);
-        for (const evt of (msg.events || [])) {
+        for (const evt of msg.events || []) {
           if (evt.tool && !evt.tool.startsWith('message_')) {
             const label = toolLabel(evt.tool, evt.args || {});
             setCurrentAction(label);
@@ -95,6 +267,7 @@ function App({ serverUrl, singleTask }) {
               iter: msg.iteration,
             }]);
           }
+
           if (evt.tool === 'message_info') {
             const text = evt.args?.text;
             if (text) {
@@ -121,8 +294,12 @@ function App({ serverUrl, singleTask }) {
       }
     });
 
-    return () => { try { ws.close(); } catch(e) {} };
-  }, [serverUrl]);
+    return () => {
+      try {
+        ws.close();
+      } catch {}
+    };
+  }, [exit, serverUrl, singleTask]);
 
   useEffect(() => {
     if (singleTask && connected) {
@@ -131,115 +308,211 @@ function App({ serverUrl, singleTask }) {
     }
   }, [singleTask, connected]);
 
-  // ── Slash commands — client-side, instant, no agent ──
-  const [activeProject, setActiveProject] = useState(null);
+  useEffect(() => {
+    const nextSuggestions = makeSuggestions(input, attachedFiles);
+    setSuggestions(nextSuggestions);
+    setSelectedSuggestion(0);
+  }, [input, attachedFiles]);
+
+  function addAttachedFile(rawPath) {
+    const resolvedPath = path.resolve(expandHome(rawPath));
+    if (!fs.existsSync(resolvedPath)) {
+      return { ok: false, message: `File not found: ${rawPath}` };
+    }
+    if (attachedFiles.includes(resolvedPath)) {
+      return { ok: false, message: `Already attached: ${path.basename(resolvedPath)}` };
+    }
+    setAttachedFiles(prev => [...prev, resolvedPath]);
+    return { ok: true, message: `Attached: ${path.basename(resolvedPath)}` };
+  }
+
+  function removeAttachedFile(rawTarget) {
+    const target = rawTarget.trim();
+    if (!target) {
+      return { ok: false, message: 'Usage: /unattach <index|path|basename|all>' };
+    }
+
+    if (target.toLowerCase() === 'all') {
+      if (attachedFiles.length === 0) {
+        return { ok: false, message: 'No attached files.' };
+      }
+      const removedCount = attachedFiles.length;
+      setAttachedFiles([]);
+      return { ok: true, message: `Removed ${removedCount} attached ${removedCount === 1 ? 'file' : 'files'}.` };
+    }
+
+    const index = Number.parseInt(target, 10);
+    if (Number.isInteger(index) && String(index) === target && index >= 1 && index <= attachedFiles.length) {
+      const removed = attachedFiles[index - 1];
+      setAttachedFiles(prev => prev.filter((_, i) => i !== index - 1));
+      return { ok: true, message: `Removed: ${path.basename(removed)}` };
+    }
+
+    const resolvedTarget = path.resolve(expandHome(target));
+    const exactMatches = attachedFiles.filter(filePath => (
+      filePath === resolvedTarget ||
+      compactHome(filePath) === target
+    ));
+    if (exactMatches.length === 1) {
+      const match = exactMatches[0];
+      setAttachedFiles(prev => prev.filter(filePath => filePath !== match));
+      return { ok: true, message: `Removed: ${path.basename(match)}` };
+    }
+    if (exactMatches.length > 1) {
+      return { ok: false, message: `Multiple attached files match '${target}'. Use /unattach <index> instead.` };
+    }
+
+    const basenameMatches = attachedFiles.filter(filePath => path.basename(filePath) === target);
+    if (basenameMatches.length === 1) {
+      const match = basenameMatches[0];
+      setAttachedFiles(prev => prev.filter(filePath => filePath !== match));
+      return { ok: true, message: `Removed: ${path.basename(match)}` };
+    }
+    if (basenameMatches.length > 1) {
+      return { ok: false, message: `Multiple attached files match '${target}'. Use /unattach <index> instead.` };
+    }
+
+    return { ok: false, message: `Attached file not found: ${target}` };
+  }
+
+  function acceptSuggestion() {
+    if (suggestions.length === 0) return false;
+    setInput(suggestions[selectedSuggestion]?.value ?? input);
+    setInputVersion(prev => prev + 1);
+    return true;
+  }
 
   function handleSlashCommand(text) {
-    const parts = text.split(/\s+/);
-    const cmd = parts[0].toLowerCase();
+    const { cmd, argText, argWords } = parseCommand(text);
 
     if (cmd === '/help') {
       setMessages(prev => [...prev, { type: 'user', text }, { type: 'result', text:
-        'Commands:\n  /project              list projects\n  /project <name>       switch to project\n  /project new <name>   create new project\n  /serve [port]         serve active project\n  /help                 this message\n  exit                  quit\n\nAnything else goes to the agent.'
+        'Commands:\n  /project              list / switch / create projects\n  /project <name>       switch to project\n  /project new <name>   create new project\n  /serve [port]         serve active project\n  /attach <path>        attach a file or image\n  /unattach <target>    remove an attached file\n  /help                 this message\n  exit                  quit\n\nAnything else goes to the agent.'
       }]);
       return true;
     }
 
     if (cmd === '/project') {
-      const delDir = path.resolve(ARK_DIR, 'workspace/deliverables');
+      const deliverablesDir = path.resolve(ARK_DIR, 'workspace/deliverables');
 
-      // List projects: /project or /project list
-      if (parts.length === 1 || parts[1] === 'list') {
+      if (argWords.length === 0 || argWords[0] === 'list') {
         try {
-          const entries = fs.readdirSync(delDir).filter(d => {
-            try { return fs.statSync(path.join(delDir, d)).isDirectory() && !d.startsWith('.'); }
-            catch { return false; }
+          const entries = fs.readdirSync(deliverablesDir).filter(entry => {
+            try {
+              return fs.statSync(path.join(deliverablesDir, entry)).isDirectory() && !entry.startsWith('.');
+            } catch {
+              return false;
+            }
           });
-          const list = entries.length ? entries.map(d => {
-            const hasTmd = fs.existsSync(path.join(delDir, d, 'tsunami.md'));
-            const active = d === activeProject ? ' ← active' : '';
-            return `  ${hasTmd ? '●' : '○'} ${d}${active}`;
-          }).join('\n') : '  No projects yet. Use /project new <name>';
-          setMessages(prev => [...prev, { type: 'user', text }, { type: 'result', text: `Projects:\n${list}` }]);
-        } catch(e) {
+          const listing = entries.length
+            ? entries.map(entry => {
+                const hasTsunamiMd = fs.existsSync(path.join(deliverablesDir, entry, 'tsunami.md'));
+                const active = entry === activeProject ? ' <- active' : '';
+                return `  ${hasTsunamiMd ? '●' : '○'} ${entry}${active}`;
+              }).join('\n')
+            : '  No projects yet. Use /project new <name>';
+          setMessages(prev => [...prev, { type: 'user', text }, { type: 'result', text: `Projects:\n${listing}` }]);
+        } catch {
           setMessages(prev => [...prev, { type: 'user', text }, { type: 'result', text: 'No projects directory found.' }]);
         }
         return true;
       }
 
-      if (parts[1] === 'new' && parts[2]) {
-        const name = parts[2];
-        const projDir = path.join(delDir, name);
-        fs.mkdirSync(projDir, { recursive: true });
-        fs.writeFileSync(path.join(projDir, 'tsunami.md'), `# ${name}\n\nNew project.\n`);
+      if (argWords[0] === 'new' && argWords[1]) {
+        const name = argWords.slice(1).join(' ');
+        const projectDir = path.join(deliverablesDir, name);
+        fs.mkdirSync(projectDir, { recursive: true });
+        fs.writeFileSync(path.join(projectDir, 'tsunami.md'), `# ${name}\n\nNew project.\n`);
         setActiveProject(name);
         setMessages(prev => [...prev, { type: 'user', text }, { type: 'result', text: `Created project: ${name}` }]);
         return true;
       }
 
-      // Switch project
-      const name = parts[1];
-      const projDir = path.join(delDir, name);
-      if (!fs.existsSync(projDir) || !fs.statSync(projDir).isDirectory()) {
+      const name = argText;
+      const projectDir = path.join(deliverablesDir, name);
+      if (!fs.existsSync(projectDir) || !fs.statSync(projectDir).isDirectory()) {
         setMessages(prev => [...prev, { type: 'user', text }, { type: 'error', text: `Project '${name}' not found` }]);
         return true;
       }
+
       setActiveProject(name);
-      const tmdPath = path.join(projDir, 'tsunami.md');
-      const context = fs.existsSync(tmdPath) ? fs.readFileSync(tmdPath, 'utf-8') : 'No tsunami.md';
-      const files = fs.readdirSync(projDir).filter(f => f !== 'tsunami.md');
-      setMessages(prev => [...prev, { type: 'user', text }, { type: 'result', text: `Active: ${name}\n\n${context}\n\nFiles: ${files.join(', ') || 'none'}` }]);
+      const contextPath = path.join(projectDir, 'tsunami.md');
+      const context = fs.existsSync(contextPath) ? fs.readFileSync(contextPath, 'utf-8') : 'No tsunami.md';
+      const files = fs.readdirSync(projectDir).filter(file => file !== 'tsunami.md');
+      setMessages(prev => [...prev, {
+        type: 'user',
+        text,
+      }, {
+        type: 'result',
+        text: `Active: ${name}\n\n${context}\n\nFiles: ${files.join(', ') || 'none'}`,
+      }]);
       return true;
     }
 
     if (cmd === '/serve') {
-      const port = parts[1] || '8080';
+      const port = argWords[0] || '8080';
       const serveDir = activeProject
         ? path.resolve(ARK_DIR, 'workspace/deliverables', activeProject)
         : path.resolve(ARK_DIR, 'workspace/deliverables');
       spawn('python3', ['-m', 'http.server', port, '--directory', serveDir], {
-        detached: true, stdio: 'ignore'
+        detached: true,
+        stdio: 'ignore',
       }).unref();
       setMessages(prev => [...prev, { type: 'user', text }, { type: 'result', text: `Serving on http://localhost:${port}` }]);
       return true;
     }
 
     if (cmd === '/attach') {
-      // If path provided, use it directly
-      if (parts[1]) {
-        const filePath = parts.slice(1).join(' ');
-        if (fs.existsSync(filePath)) {
-          setAttachedFiles(prev => [...prev, filePath]);
-          setMessages(prev => [...prev, { type: 'result', text: `Attached: ${path.basename(filePath)}` }]);
-        } else {
-          setMessages(prev => [...prev, { type: 'error', text: `File not found: ${filePath}` }]);
-        }
+      if (argText) {
+        const result = addAttachedFile(argText);
+        setMessages(prev => [...prev, { type: 'user', text }, { type: result.ok ? 'result' : 'error', text: result.message }]);
         return true;
       }
 
-      // No path — open system file picker
       try {
         const selected = execSync(
           'zenity --file-selection --title="Attach file" 2>/dev/null || kdialog --getopenfilename ~ 2>/dev/null',
           { encoding: 'utf-8', timeout: 30000 }
         ).trim();
         if (selected && fs.existsSync(selected)) {
-          setAttachedFiles(prev => [...prev, selected]);
-          setMessages(prev => [...prev, { type: 'result', text: `Attached: ${path.basename(selected)}` }]);
+          const result = addAttachedFile(selected);
+          setMessages(prev => [...prev, { type: 'result', text: result.message }]);
         }
-      } catch(e) {
-        // User cancelled or no GUI available
+      } catch {
         setMessages(prev => [...prev, { type: 'result', text: 'Cancelled (or use /attach <path>)' }]);
       }
       return true;
     }
 
-    // Unknown slash command
+    if (cmd === '/unattach' || cmd === '/detach') {
+      if (!argText) {
+        if (attachedFiles.length === 0) {
+          setMessages(prev => [...prev, { type: 'user', text }, { type: 'result', text: 'No attached files.' }]);
+          return true;
+        }
+        const listing = attachedFiles
+          .map((filePath, index) => `  ${index + 1}. ${compactHome(filePath)}`)
+          .join('\n');
+        setMessages(prev => [...prev, {
+          type: 'user',
+          text,
+        }, {
+          type: 'result',
+          text: `Attached files:\n${listing}\n\nUse /unattach <index|path|basename|all>.`,
+        }]);
+        return true;
+      }
+
+      const result = removeAttachedFile(argText);
+      setMessages(prev => [...prev, { type: 'user', text }, { type: result.ok ? 'result' : 'error', text: result.message }]);
+      return true;
+    }
+
     setMessages(prev => [...prev, { type: 'user', text }, { type: 'error', text: `Unknown command: ${cmd}. Type /help` }]);
     return true;
   }
 
-  const handleSubmit = useCallback((value) => {
+  const handleSubmit = useCallback(value => {
     const text = value.trim();
     if (!text && attachedFiles.length === 0) return;
 
@@ -248,7 +521,6 @@ function App({ serverUrl, singleTask }) {
       return;
     }
 
-    // Slash commands — instant, no agent
     if (text.startsWith('/')) {
       setInput('');
       handleSlashCommand(text);
@@ -257,20 +529,11 @@ function App({ serverUrl, singleTask }) {
 
     setInput('');
 
-    // Build task with file context
     let task = text;
-    const fileInfos = [];
-
-    for (const f of attachedFiles) {
-      const ext = path.extname(f).toLowerCase();
+    for (const filePath of attachedFiles) {
+      const ext = path.extname(filePath).toLowerCase();
       const isImage = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'].includes(ext);
-      if (isImage) {
-        task += `\n[Attached image: ${f}]`;
-        fileInfos.push({ path: f, type: 'image' });
-      } else {
-        task += `\n[Attached file: ${f}]`;
-        fileInfos.push({ path: f, type: 'file' });
-      }
+      task += `\n[Attached ${isImage ? 'image' : 'file'}: ${filePath}]`;
     }
 
     setMessages(prev => [...prev, {
@@ -280,61 +543,57 @@ function App({ serverUrl, singleTask }) {
     }]);
     setAttachedFiles([]);
     wsRef.current?.send(JSON.stringify({ type: 'run', task }));
-  }, [exit, attachedFiles]);
+  }, [attachedFiles, exit]);
 
-  // Key bindings — Ctrl+C does NOT exit, only cancels current action
   useInput((ch, key) => {
     if (key.ctrl && ch === 'c') {
       if (running) {
-        // Cancel current task (TODO: send cancel to backend)
         setRunning(false);
         setCurrentAction(null);
         setMessages(prev => [...prev, { type: 'error', text: 'interrupted' }]);
       }
-      // Don't exit — user can keep typing
       return;
     }
 
-    // Ctrl+D to exit
     if (key.ctrl && ch === 'd') {
       exit();
       return;
     }
 
-    // /attach <path> command
+    if (suggestions.length > 0 && key.upArrow) {
+      setSelectedSuggestion(prev => (prev === 0 ? suggestions.length - 1 : prev - 1));
+      return;
+    }
+
+    if (suggestions.length > 0 && key.downArrow) {
+      setSelectedSuggestion(prev => (prev + 1) % suggestions.length);
+      return;
+    }
+
+    if (suggestions.length > 0 && (key.tab || ch === '\t')) {
+      acceptSuggestion();
+      return;
+    }
   }, { isActive: !singleTask });
 
-  // Handle /commands in input
-  const handleChange = useCallback((value) => {
-    // Check for /attach command
-    if (value.endsWith(' ') && value.trim().startsWith('/attach ')) {
-      const filePath = value.trim().slice(8).trim();
-      if (filePath && fs.existsSync(filePath)) {
-        setAttachedFiles(prev => [...prev, filePath]);
-        setInput('');
-        return;
-      }
-    }
+  const handleChange = useCallback(value => {
     setInput(value);
   }, []);
 
   return (
     <Box flexDirection="column" width={cols}>
-      {/* Banner */}
       <Box flexDirection="column">
-        {BANNER_LINES.map((line, i) => (
-          <Text key={i} bold color={line.color}>{line.text}</Text>
+        {BANNER_LINES.map((line, index) => (
+          <Text key={index} bold color={line.color}>{line.text}</Text>
         ))}
       </Box>
       <Text color="#4a9eff" bold> Autonomous Execution Agent</Text>
       <Text> </Text>
 
-      {/* Messages */}
-      {messages.map((msg, i) => (
-        <MessageView key={i} msg={msg} cols={cols} />
+      {messages.map((msg, index) => (
+        <MessageView key={index} msg={msg} cols={cols} />
       ))}
 
-      {/* Current activity */}
       {running && currentAction && (
         <Box marginLeft={2}>
           <Text color="#4a9eff"><Spinner type="dots" /></Text>
@@ -348,49 +607,48 @@ function App({ serverUrl, singleTask }) {
         </Box>
       )}
 
-      {/* Timer */}
       {running && startTime && (
         <Box marginTop={0} marginLeft={2}>
           <Text dimColor>({timeAgo(startTime)} · iteration {iteration})</Text>
         </Box>
       )}
 
-      {/* Attached files indicator */}
       {attachedFiles.length > 0 && !running && (
-        <Box marginLeft={2} marginTop={1}>
-          {attachedFiles.map((f, i) => {
-            const ext = path.extname(f).toLowerCase();
-            const isImg = ['.png','.jpg','.jpeg','.gif','.webp'].includes(ext);
-            const size = fs.existsSync(f) ? humanSize(fs.statSync(f).size) : '?';
+        <Box flexDirection="column" marginLeft={2} marginTop={1}>
+          <Text dimColor>Attached files:</Text>
+          {attachedFiles.map((filePath, index) => {
+            const ext = path.extname(filePath).toLowerCase();
+            const isImage = ['.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(ext);
+            const size = fs.existsSync(filePath) ? humanSize(fs.statSync(filePath).size) : '?';
             return (
-              <Box key={i} marginRight={2}>
-                <Text color={isImg ? 'magenta' : 'yellow'}>
-                  {isImg ? '🖼 ' : '📎 '}{path.basename(f)} ({size})
+              <Box key={filePath} marginRight={2}>
+                <Text color={isImage ? 'magenta' : 'yellow'}>
+                  {index + 1}. {isImage ? 'image' : 'file'} {path.basename(filePath)} ({size})
                 </Text>
+                <Text dimColor>  {compactHome(filePath)}</Text>
               </Box>
             );
           })}
+          <Box>
+            <Text dimColor>Use /unattach &lt;index|path|basename|all&gt; to remove attachments.</Text>
+          </Box>
         </Box>
       )}
 
-      {/* Command suggestions */}
-      {!running && !singleTask && input.startsWith('/') && input.length < 15 && (
+      {!running && !singleTask && suggestions.length > 0 && (
         <Box flexDirection="column" marginLeft={2} marginBottom={0}>
-          {[
-            { cmd: '/project', desc: 'list / switch / create projects' },
-            { cmd: '/serve', desc: 'host active project on localhost' },
-            { cmd: '/attach', desc: 'attach a file or image' },
-            { cmd: '/help', desc: 'show all commands' },
-          ].filter(c => c.cmd.startsWith(input)).map((c, i) => (
-            <Box key={i}>
-              <Text color="#4a9eff">{c.cmd}</Text>
-              <Text dimColor>  {c.desc}</Text>
+          {suggestions.map((suggestion, index) => (
+            <Box key={`${suggestion.kind}-${suggestion.label}-${index}`}>
+              <Text color={index === selectedSuggestion ? '#ffffff' : '#4a9eff'}>
+                {index === selectedSuggestion ? '› ' : '  '}
+                {suggestion.label}
+              </Text>
+              <Text dimColor>  {suggestion.desc}</Text>
             </Box>
           ))}
         </Box>
       )}
 
-      {/* Input */}
       {!running && !singleTask && (
         <Box flexDirection="column" marginTop={0}>
           <Box
@@ -401,6 +659,7 @@ function App({ serverUrl, singleTask }) {
             width={cols - 2}
           >
             <TextInput
+              key={inputVersion}
               value={input}
               onChange={handleChange}
               onSubmit={handleSubmit}
@@ -412,13 +671,17 @@ function App({ serverUrl, singleTask }) {
               <Text dimColor>type / for commands · exit to quit</Text>
             </Box>
           )}
+          {input.startsWith('/') && suggestions.length > 0 && (
+            <Box marginLeft={2}>
+              <Text dimColor>tab to accept · ↑/↓ to navigate</Text>
+            </Box>
+          )}
         </Box>
       )}
     </Box>
   );
 }
 
-// ── Messages ──
 function MessageView({ msg, cols }) {
   if (msg.type === 'user') {
     const pad = Math.max(0, cols - msg.text.length - 3);
@@ -429,11 +692,11 @@ function MessageView({ msg, cols }) {
         </Box>
         {msg.files && msg.files.length > 0 && (
           <Box marginLeft={2}>
-            {msg.files.map((f, i) => {
-              const ext = path.extname(f).toLowerCase();
-              const isImg = ['.png','.jpg','.jpeg','.gif','.webp'].includes(ext);
+            {msg.files.map((filePath, index) => {
+              const ext = path.extname(filePath).toLowerCase();
+              const isImage = ['.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(ext);
               return (
-                <Text key={i} dimColor> {isImg ? '🖼' : '📎'} {path.basename(f)}</Text>
+                <Text key={`${filePath}-${index}`} dimColor> {isImage ? 'IMG' : 'FILE'} {path.basename(filePath)}</Text>
               );
             })}
           </Box>
@@ -470,7 +733,7 @@ function MessageView({ msg, cols }) {
         </Box>
         {msg.iters && (
           <Box marginLeft={2} marginTop={0}>
-            <Text color="#4a9eff">✓ completed ({msg.iters} {msg.iters === 1 ? 'iteration' : 'iterations'})</Text>
+            <Text color="#4a9eff">OK completed ({msg.iters} {msg.iters === 1 ? 'iteration' : 'iterations'})</Text>
           </Box>
         )}
       </Box>
@@ -480,7 +743,7 @@ function MessageView({ msg, cols }) {
   if (msg.type === 'error') {
     return (
       <Box marginLeft={2} marginTop={1}>
-        <Text color="red">✗ {msg.text}</Text>
+        <Text color="red">ERR {msg.text}</Text>
       </Box>
     );
   }
@@ -488,22 +751,20 @@ function MessageView({ msg, cols }) {
   return null;
 }
 
-// ── CLI entry ──
 const args = process.argv.slice(2);
 let task = null;
 let wsPort = 3000;
-let attachFiles = [];
+const attachFiles = [];
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--task' && args[i + 1]) task = args[++i];
-  if (args[i] === '--port' && args[i + 1]) wsPort = parseInt(args[++i]);
+  if (args[i] === '--port' && args[i + 1]) wsPort = parseInt(args[++i], 10);
   if (args[i] === '--attach' && args[i + 1]) attachFiles.push(args[++i]);
 }
 
-// If task has attachments, append them
 if (task && attachFiles.length > 0) {
-  for (const f of attachFiles) {
-    task += `\n[Attached file: ${f}]`;
+  for (const filePath of attachFiles) {
+    task += `\n[Attached file: ${filePath}]`;
   }
 }
 
