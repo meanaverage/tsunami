@@ -247,6 +247,22 @@ class Agent:
             break
         return streak
 
+    def _recent_component_probe_streak(self, limit: int = 4) -> int:
+        streak = 0
+        for msg in reversed(self.state.conversation):
+            if msg.role != "assistant" or not msg.tool_call:
+                continue
+            tc = msg.tool_call.get("function", msg.tool_call)
+            tool_call = ToolCall(name=tc.get("name", ""), arguments=tc.get("arguments", {}) or {})
+            is_probe = tool_call.name == "python_exec" or self._is_read_only_tool_call(tool_call)
+            if is_probe and self._tool_targets_components(tool_call):
+                streak += 1
+                if streak >= limit:
+                    return streak
+                continue
+            break
+        return streak
+
     def _active_project_root_path(self) -> Path | None:
         root = getattr(self.state, "active_project_root", "") or ""
         if root:
@@ -1258,7 +1274,11 @@ class Agent:
             result = redirected
         else:
             if self.active_project and tool_call.name == "python_exec":
-                if self._active_project_has_stub_app() and self._tool_targets_components(tool_call):
+                if (
+                    self._active_project_has_stub_app()
+                    and self._tool_targets_components(tool_call)
+                    and self._recent_component_probe_streak() >= 2
+                ):
                     error_msg = (
                         "Scaffold-inspection loop blocked. src/App.tsx is still the default stub. "
                         "Stop probing src/components in python_exec and write the page composition in src/App.tsx first."
@@ -1300,7 +1320,11 @@ class Agent:
                     return error_msg
 
             if self.active_project and self._is_read_only_tool_call(tool_call):
-                if self._active_project_has_stub_app() and self._tool_targets_components(tool_call):
+                if (
+                    self._active_project_has_stub_app()
+                    and self._tool_targets_components(tool_call)
+                    and self._recent_component_probe_streak() >= 2
+                ):
                     error_msg = (
                         "Scaffold-inspection loop blocked. src/App.tsx is still the default stub. "
                         "Stop reading src/components and write the page composition in src/App.tsx first."
