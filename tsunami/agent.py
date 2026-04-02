@@ -44,11 +44,15 @@ log = logging.getLogger("tsunami.agent")
 # Maximum watcher re-generations per step to prevent infinite recursion
 MAX_WATCHER_REVISIONS = 2
 PROJECT_SUMMARY_IGNORED_DIRS = {"node_modules", "dist", ".vite", "__pycache__"}
-PROJECT_BOOTSTRAP_TOOLBOXES = ("webdev", "browser")
+PROJECT_BOOTSTRAP_TOOLBOXES = ("webdev",)
 PROJECT_LOCAL_PATH_HEADS = {
     "src", "public", "app", "components", "pages", "assets", "styles",
     "lib", "hooks", "tests", "index.html", "package.json", "package-lock.json",
     "vite.config.ts", "tsconfig.json", "tsconfig.app.json", "todo.md", "tsunami.md",
+}
+READ_ONLY_TOOL_NAMES = {
+    "message_info", "search_web", "file_read", "match_glob", "match_grep",
+    "summarize_file", "webdev_screenshot", "browser_view",
 }
 
 
@@ -128,6 +132,7 @@ class Agent:
         # Active project context
         self.active_project: str | None = None
         self.project_context: str = ""
+        self._build_fix_required = False
 
     def _recent_tool_results(self, limit: int = 8) -> list[tuple[Message, Message]]:
         """Return recent assistant tool call + tool_result pairs."""
@@ -189,6 +194,115 @@ class Agent:
             f"Recent tools were low-signal repeats ({', '.join(tool_names[-5:])})."
         )
 
+    def _is_read_only_tool_call(self, tool_call: ToolCall) -> bool:
+        if tool_call.name in READ_ONLY_TOOL_NAMES:
+            return True
+        if tool_call.name != "shell_exec":
+            return False
+
+        command = str(tool_call.arguments.get("command", "")).strip().lower()
+        if not command:
+            return False
+
+        read_only_patterns = (
+            r"^(cd\s+\S+\s*&&\s*)?ls(\s|$)",
+            r"^(cd\s+\S+\s*&&\s*)?cat(\s|$)",
+            r"^(cd\s+\S+\s*&&\s*)?find(\s|$)",
+            r"^(cd\s+\S+\s*&&\s*)?stat(\s|$)",
+            r"^(cd\s+\S+\s*&&\s*)?head(\s|$)",
+            r"^(cd\s+\S+\s*&&\s*)?tail(\s|$)",
+        )
+        return any(re.match(pattern, command) for pattern in read_only_patterns)
+
+    def _recent_read_only_streak(self, limit: int = 6) -> int:
+        streak = 0
+        for msg in reversed(self.state.conversation):
+            if msg.role != "assistant" or not msg.tool_call:
+                continue
+            tc = msg.tool_call.get("function", msg.tool_call)
+            tool_call = ToolCall(name=tc.get("name", ""), arguments=tc.get("arguments", {}) or {})
+            if self._is_read_only_tool_call(tool_call):
+                streak += 1
+                if streak >= limit:
+                    return streak
+                continue
+            break
+        return streak
+
+    def _recent_same_tool_streak(self, tool_name: str, limit: int = 4) -> int:
+        streak = 0
+        for msg in reversed(self.state.conversation):
+            if msg.role != "assistant" or not msg.tool_call:
+                continue
+            tc = msg.tool_call.get("function", msg.tool_call)
+            if tc.get("name", "") == tool_name:
+                streak += 1
+                if streak >= limit:
+                    return streak
+                continue
+            break
+        return streak
+
+    def _extract_build_failure_summary(self, tool_call: ToolCall, result: ToolResult) -> str | None:
+        command = str(tool_call.arguments.get("command", "")).lower()
+        text = result.content or ""
+        build_context = (
+            tool_call.name == "webdev_serve"
+            or tool_call.name == "webdev_screenshot"
+            or (
+                tool_call.name == "shell_exec"
+                and any(token in command for token in ("npm run build", "vite build", "tsc --noemit", "npm run typecheck"))
+            )
+        )
+        if not build_context:
+            return None
+
+        marker_lines: list[str] = []
+        active_marker = False
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                if active_marker and marker_lines:
+                    break
+                continue
+            if "BUILD WARNINGS:" in line or "BUILD ERROR DETECTED:" in line:
+                active_marker = True
+                continue
+            if active_marker:
+                marker_lines.append(line)
+                continue
+
+        generic_lines = [
+            line.strip()
+            for line in text.splitlines()
+            if any(token in line for token in (
+                "error TS",
+                "Build failed",
+                "Cannot find",
+                "Failed to resolve import",
+                "Unexpected token",
+                "Expected",
+                "[plugin:vite:",
+                "Transform failed",
+                "does not exist on type",
+            ))
+        ]
+
+        seen: set[str] = set()
+        summary: list[str] = []
+        for line in marker_lines + generic_lines:
+            clean = line.strip()
+            if not clean or clean in seen:
+                continue
+            seen.add(clean)
+            summary.append(clean)
+            if len(summary) >= 5:
+                break
+
+        if not summary:
+            return None
+        return "\n".join(f"  - {line}" for line in summary)
+
     async def _pre_scaffold(self, user_message: str) -> str:
         """Hidden pre-scaffold step — detect build tasks, provision automatically.
 
@@ -226,6 +340,28 @@ class Agent:
         # Check if project already exists
         project_dir = Path(self.config.workspace_dir) / "deliverables" / project_name
         if (project_dir / "package.json").exists():
+            try:
+                from .tools.project_init import ProjectInit
+                init_tool = ProjectInit(self.config)
+                result = await init_tool.execute(name=project_name)
+                if not result.is_error:
+                    project_summary = self.set_project(project_name)
+                    preloaded = self._preload_project_toolboxes()
+                    context = (
+                        f"\n[Project '{project_name}' already exists at {project_dir}. "
+                        f"Use it as the active project.]\n\n"
+                        f"{result.content}\n\n{project_summary}"
+                    )
+                    if preloaded:
+                        context += (
+                            "\n\nPreloaded tools for this project: "
+                            + ", ".join(preloaded)
+                            + "\nUse the browser/webdev tools directly instead of searching for load_toolbox first."
+                        )
+                    return context
+            except Exception as e:
+                log.debug(f"Existing-project activation via project_init failed: {e}")
+
             project_summary = self.set_project(project_name)
             preloaded = self._preload_project_toolboxes()
             context = f"\n[Project '{project_name}' already exists at {project_dir}. Use it as the active project.]\n\n{project_summary}"
@@ -792,7 +928,7 @@ class Agent:
         # If last 8 calls are all message_info or search with no file writes → stalled
         if len(self._tool_history) >= 8:
             recent = self._tool_history[-8:]
-            no_progress = all(t in ("message_info", "search_web", "file_read", "match_glob", "match_grep", "summarize_file") for t in recent)
+            no_progress = all(t in READ_ONLY_TOOL_NAMES for t in recent)
             if no_progress:
                 log.warning("Stall detected: 8 consecutive read-only tools with no writes")
                 self.state.add_system_note(
@@ -889,6 +1025,48 @@ class Agent:
             log.info(f"  Project setup blocked — active project is {self.active_project}")
             result = redirected
         else:
+            if self.active_project and tool_call.name == "webdev_screenshot":
+                if self._build_fix_required:
+                    error_msg = (
+                        "Build-fix loop blocked. The last build/screenshot found compile errors. "
+                        "Edit a source file to fix them before taking another screenshot."
+                    )
+                    log.warning(error_msg)
+                    self.state.add_system_note(
+                        "BUILD FIX REQUIRED: edit the broken source file before using webdev_screenshot again."
+                    )
+                    self.state.add_tool_result(tool_call.name, tool_call.arguments, error_msg, is_error=True)
+                    self.state.record_error(tool_call.name, tool_call.arguments, error_msg)
+                    return error_msg
+                screenshot_streak = self._recent_same_tool_streak("webdev_screenshot")
+                if screenshot_streak >= 3:
+                    error_msg = (
+                        "Screenshot loop blocked. You have already captured the page multiple times without editing code. "
+                        "Change a project file first, then run webdev_screenshot again."
+                    )
+                    log.warning(error_msg)
+                    self.state.add_system_note(
+                        "Screenshot loop blocked. Stop re-capturing the same page and edit src/App.tsx or another project file."
+                    )
+                    self.state.add_tool_result(tool_call.name, tool_call.arguments, error_msg, is_error=True)
+                    self.state.record_error(tool_call.name, tool_call.arguments, error_msg)
+                    return error_msg
+
+            if self.active_project and self._is_read_only_tool_call(tool_call):
+                read_only_streak = self._recent_read_only_streak()
+                if read_only_streak >= 5:
+                    error_msg = (
+                        "Read-only loop blocked. You have inspected this project enough. "
+                        "Write a file now: create todo.md if missing, then edit src/App.tsx or another project file."
+                    )
+                    log.warning(error_msg)
+                    self.state.add_system_note(
+                        "Read-only loop blocked. Stop inspecting scaffold files and start writing code."
+                    )
+                    self.state.add_tool_result(tool_call.name, tool_call.arguments, error_msg, is_error=True)
+                    self.state.record_error(tool_call.name, tool_call.arguments, error_msg)
+                    return error_msg
+
             # Tool dedup check — skip re-execution of identical read-only calls
             cached = self.tool_dedup.lookup(tool_call.name, tool_call.arguments)
             if cached is not None:
@@ -956,6 +1134,17 @@ class Agent:
             tool_call.name, tool_call.arguments, result.content,
             result.is_error, self.session_id,
         )
+
+        build_failure_summary = self._extract_build_failure_summary(tool_call, result)
+        if build_failure_summary:
+            self._build_fix_required = True
+            self.state.add_system_note(
+                "BUILD FAILED. Fix these exact errors before any more screenshots or extra inspection:\n"
+                f"{build_failure_summary}"
+            )
+
+        if tool_call.name in ("file_write", "file_edit", "file_append") and not result.is_error:
+            self._build_fix_required = False
 
         # 8a0. Auto-scaffold — if .tsx written to deliverables without package.json, provision it
         if tool_call.name == "file_write" and not result.is_error:
