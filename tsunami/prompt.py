@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 
 from .state import AgentState
+from .docker_exec import running_inside_docker
 
 
 def build_system_prompt(state: AgentState, workspace: str = "./workspace",
@@ -117,5 +118,8 @@ def _gather_environment() -> str:
     except Exception:
         pass
     docker_mode = os.environ.get("TSUNAMI_DOCKER_EXEC", "auto")
-    parts.append(f"Execution sandbox: docker={docker_mode}")
+    if running_inside_docker():
+        parts.append(f"Execution sandbox: container (inner docker exec={docker_mode})")
+    else:
+        parts.append(f"Execution sandbox: host (docker exec={docker_mode})")
     return "\n".join(parts)

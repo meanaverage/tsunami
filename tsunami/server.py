@@ -32,6 +32,7 @@ app = FastAPI(title="TSUNAMI", version="1.0.0")
 
 # Active WebSocket connections
 connections: list[WebSocket] = []
+active_runs: dict[int, dict] = {}
 
 # Server state
 _config: TsunamiConfig | None = None
@@ -130,6 +131,8 @@ async def index():
 async def health():
     cfg = get_config()
     backend_mode = "docker" if os.environ.get("TSUNAMI_IN_DOCKER", "").strip().lower() in ("1", "true", "yes", "on") else "host"
+    active_model_name = os.environ.get("TSUNAMI_ACTIVE_MODEL_NAME") or cfg.model_name
+    active_watcher_model_name = os.environ.get("TSUNAMI_ACTIVE_WATCHER_MODEL_NAME") or cfg.watcher_model
     watcher_ok = None
     watcher_error = None
     model_error = None
@@ -158,12 +161,12 @@ async def health():
         "backend_mode": backend_mode,
         "model_endpoint": cfg.model_endpoint,
         "model_ok": model_ok,
-        "model_name": cfg.model_name,
+        "model_name": active_model_name,
         "model_error": model_error,
         "watcher_enabled": cfg.watcher_enabled,
         "watcher_endpoint": cfg.watcher_endpoint,
         "watcher_ok": watcher_ok,
-        "watcher_model": cfg.watcher_model,
+        "watcher_model": active_watcher_model_name,
         "watcher_error": watcher_error,
         "tool_count": len(registry.names()),
         "tool_loading": "on-demand via load_toolbox",
@@ -231,6 +234,7 @@ async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
     connections.append(ws)
     log.info(f"WebSocket connected. {len(connections)} active.")
+    ws_id = id(ws)
 
     try:
         while True:
@@ -240,15 +244,41 @@ async def websocket_endpoint(ws: WebSocket):
             if msg.get("type") == "run":
                 task = msg.get("task", "")
                 if task:
+                    current = active_runs.get(ws_id)
+                    if current and not current["task"].done():
+                        await ws.send_text(json.dumps({
+                            "type": "error",
+                            "message": "A run is already in progress. Stop it before starting another.",
+                        }))
+                        continue
                     if task.startswith("/"):
                         await handle_command(ws, task)
                     else:
-                        await run_agent_with_streaming(ws, task)
+                        run_task = asyncio.create_task(run_agent_with_streaming(ws, task))
+                        active_runs[ws_id] = {"task": run_task, "agent": None}
+
+            elif msg.get("type") == "abort":
+                current = active_runs.get(ws_id)
+                if current and current.get("agent") is not None:
+                    current["agent"].abort_signal.abort("user_stop")
+                    await ws.send_text(json.dumps({
+                        "type": "status",
+                        "message": "Stopping run...",
+                    }))
+                else:
+                    await ws.send_text(json.dumps({
+                        "type": "status",
+                        "message": "No run is currently active.",
+                    }))
 
             elif msg.get("type") == "ping":
                 await ws.send_text(json.dumps({"type": "pong"}))
 
     except WebSocketDisconnect:
+        current = active_runs.get(ws_id)
+        if current and current.get("agent") is not None:
+            current["agent"].abort_signal.abort("websocket_disconnect")
+        active_runs.pop(ws_id, None)
         connections.remove(ws)
         log.info(f"WebSocket disconnected. {len(connections)} active.")
 
@@ -362,6 +392,10 @@ async def run_agent_with_streaming(ws: WebSocket, task: str):
     """Run the agent loop, streaming each iteration to the WebSocket."""
     cfg = get_config()
     agent = Agent(cfg)
+    ws_id = id(ws)
+    current = active_runs.get(ws_id)
+    if current is not None:
+        current["agent"] = agent
 
     # Inject active project context
     if _active_project:
@@ -447,6 +481,8 @@ async def run_agent_with_streaming(ws: WebSocket, task: str):
             "message": str(e),
             "iteration": agent.state.iteration,
         }, agent=agent)
+    finally:
+        active_runs.pop(ws_id, None)
 
 
 def start_server(host: str = "0.0.0.0", port: int = 3000):

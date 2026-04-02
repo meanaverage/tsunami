@@ -9,6 +9,8 @@ fi
 TSUNAMI_DOCKER_BACKEND="${TSUNAMI_DOCKER_BACKEND:-auto}"
 TSUNAMI_DOCKER_IMAGE="${TSUNAMI_DOCKER_IMAGE:-tsunami-exec:latest}"
 TSUNAMI_DOCKER_ROOT="${TSUNAMI_DOCKER_ROOT:-/workspace/tsunami}"
+TSUNAMI_DOCKER_REBUILD="${TSUNAMI_DOCKER_REBUILD:-1}"
+TSUNAMI_CTX_SIZE="${TSUNAMI_CTX_SIZE:-32768}"
 STARTED_DOCKER_BACKEND=0
 
 if [ -z "$PYTHON_BIN" ]; then
@@ -55,7 +57,7 @@ docker_container_running() {
 }
 
 ensure_docker_image() {
-  if docker image inspect "$TSUNAMI_DOCKER_IMAGE" >/dev/null 2>&1; then
+  if [ "$TSUNAMI_DOCKER_REBUILD" != "1" ] && docker image inspect "$TSUNAMI_DOCKER_IMAGE" >/dev/null 2>&1; then
     return 0
   fi
   echo "  building Docker backend image: $TSUNAMI_DOCKER_IMAGE"
@@ -102,6 +104,8 @@ start_docker_backend() {
     -e TSUNAMI_MODEL_ENDPOINT="$backend_model_endpoint" \
     -e TSUNAMI_WATCHER_ENDPOINT="$backend_bee_endpoint" \
     -e TSUNAMI_BEE_ENDPOINT="$backend_bee_endpoint" \
+    -e TSUNAMI_ACTIVE_MODEL_NAME="${TSUNAMI_ACTIVE_MODEL_NAME:-}" \
+    -e TSUNAMI_ACTIVE_WATCHER_MODEL_NAME="${TSUNAMI_ACTIVE_WATCHER_MODEL_NAME:-}" \
     -e TSUNAMI_MAX_TOKENS="${TSUNAMI_MAX_TOKENS:-1024}" \
     "$TSUNAMI_DOCKER_IMAGE" \
     python3 -c "from tsunami.server import start_server; start_server(host='0.0.0.0', port=3000)" \
@@ -211,7 +215,7 @@ start_llama_server() {
   "$LLAMA" --model "$model_path" "${extra_args[@]}" \
     --host 0.0.0.0 --port "$port" \
     --parallel "$parallel" \
-    --ctx-size 16384 --n-gpu-layers 99 -fa on \
+    --ctx-size "$TSUNAMI_CTX_SIZE" --n-gpu-layers 99 -fa on \
     --jinja --chat-template-kwargs '{"enable_thinking":false}' \
     > "/tmp/llama-server-${port}.log" 2>&1 &
   echo $!
@@ -245,6 +249,8 @@ export TSUNAMI_MODEL_ENDPOINT="http://localhost:8090"
 export TSUNAMI_WATCHER_ENDPOINT="$BEE_ENDPOINT"
 export TSUNAMI_BEE_ENDPOINT="$BEE_ENDPOINT"
 export TSUNAMI_MAX_TOKENS="${TSUNAMI_MAX_TOKENS:-1024}"
+export TSUNAMI_ACTIVE_MODEL_NAME=""
+export TSUNAMI_ACTIVE_WATCHER_MODEL_NAME=""
 
 if ! check_model; then
   clear_stale_llama_port 8090 || true
@@ -305,9 +311,11 @@ if ! check_model; then
       --cache-type-k q8_0 --cache-type-v q8_0 \
       > /tmp/llama-server-8090.log 2>&1 &
     MODEL_PID=$!
+    export TSUNAMI_ACTIVE_MODEL_NAME="$(basename "$MOE_MODEL")"
   elif [ -n "$PREFERRED_WAVE" ] && [ -f "$LLAMA" ]; then
     echo "  starting wave on :8090 -> $(basename "$PREFERRED_WAVE")"
     MODEL_PID="$(start_llama_server 8090 "$PREFERRED_WAVE" "$WAVE_MMPROJ" "$WAVE_CACHE_K" "$WAVE_CACHE_V")"
+    export TSUNAMI_ACTIVE_MODEL_NAME="$(basename "$PREFERRED_WAVE")"
   fi
 
   if [ -n "$MODEL_PID" ]; then
@@ -317,6 +325,7 @@ if ! check_model; then
         kill "$MODEL_PID" 2>/dev/null || true
         echo "  27B wave failed to load; falling back to $(basename "$TEXT_MODEL")"
         MODEL_PID="$(start_llama_server 8090 "$TEXT_MODEL" "$MMPROJ_SMALL" "" "")"
+        export TSUNAMI_ACTIVE_MODEL_NAME="$(basename "$TEXT_MODEL")"
         if ! wait_for_health 8090 120 "/tmp/llama-server-8090.log" "${MODEL_PID:-}" "wave"; then
           echo "  local model failed to come up on :8090; see /tmp/llama-server-8090.log"
         fi
@@ -334,13 +343,16 @@ if ! check_model; then
       BEE_PID="$(start_llama_server 8092 "$TEXT_MODEL" "$MMPROJ_SMALL" "" "")"
       if wait_for_health 8092 60 "/tmp/llama-server-8092.log" "${BEE_PID:-}" "bee"; then
         BEE_ENDPOINT="http://localhost:8092"
+        export TSUNAMI_ACTIVE_WATCHER_MODEL_NAME="$(basename "$TEXT_MODEL")"
       else
         kill "$BEE_PID" 2>/dev/null || true
         BEE_PID=""
         BEE_ENDPOINT="http://localhost:8090"
+        export TSUNAMI_ACTIVE_WATCHER_MODEL_NAME="${TSUNAMI_ACTIVE_MODEL_NAME}"
       fi
     else
       BEE_ENDPOINT="http://localhost:8090"
+      export TSUNAMI_ACTIVE_WATCHER_MODEL_NAME="${TSUNAMI_ACTIVE_MODEL_NAME}"
     fi
   fi
 fi
@@ -348,6 +360,9 @@ fi
 export TSUNAMI_MODEL_ENDPOINT="http://localhost:8090"
 export TSUNAMI_WATCHER_ENDPOINT="$BEE_ENDPOINT"
 export TSUNAMI_BEE_ENDPOINT="$BEE_ENDPOINT"
+if [ -z "${TSUNAMI_ACTIVE_WATCHER_MODEL_NAME:-}" ]; then
+  export TSUNAMI_ACTIVE_WATCHER_MODEL_NAME="${TSUNAMI_ACTIVE_MODEL_NAME}"
+fi
 
 # Start Python WebSocket backend if not running
 BACKEND_READY=0

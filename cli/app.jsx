@@ -35,6 +35,7 @@ const TOOL_LABELS = {
 const COMMANDS = [
   { cmd: '/project', desc: 'list / switch / create projects', takesArgs: true },
   { cmd: '/serve', desc: 'host active project on localhost', takesArgs: true },
+  { cmd: '/stop', desc: 'stop the active run', takesArgs: false },
   { cmd: '/attach', desc: 'attach a file or image', takesArgs: true },
   { cmd: '/unattach', desc: 'remove an attached file', takesArgs: true },
   { cmd: '/detach', desc: 'alias for /unattach', takesArgs: true },
@@ -334,6 +335,10 @@ function App({ serverUrl, singleTask }) {
         }]);
       }
 
+      if (msg.type === 'status') {
+        setMessages(prev => [...prev, { type: 'result', text: msg.message }]);
+      }
+
       if (msg.type === 'step') {
         setIteration(msg.iteration);
         const nextTraceEntries = [];
@@ -544,8 +549,18 @@ function App({ serverUrl, singleTask }) {
 
     if (cmd === '/help') {
       setMessages(prev => [...prev, { type: 'user', text }, { type: 'result', text:
-        'Commands:\n  /project              list / switch / create projects\n  /project <name>       switch to project\n  /project new <name>   create new project\n  /serve [port]         serve active project\n  /attach <path>        attach a file or image\n  /unattach <target>    remove an attached file\n  /help                 this message\n  exit                  quit\n\nAnything else goes to the agent.'
+        'Commands:\n  /project              list / switch / create projects\n  /project <name>       switch to project\n  /project new <name>   create new project\n  /serve [port]         serve active project\n  /stop                 stop the active run\n  /attach <path>        attach a file or image\n  /unattach <target>    remove an attached file\n  /help                 this message\n  exit                  quit\n\nAnything else goes to the agent.'
       }]);
+      return true;
+    }
+
+    if (cmd === '/stop') {
+      if (running) {
+        wsRef.current?.send(JSON.stringify({ type: 'abort' }));
+        setMessages(prev => [...prev, { type: 'user', text }, { type: 'result', text: 'Stopping run...' }]);
+      } else {
+        setMessages(prev => [...prev, { type: 'user', text }, { type: 'result', text: 'No run is currently active.' }]);
+      }
       return true;
     }
 
@@ -706,15 +721,22 @@ function App({ serverUrl, singleTask }) {
   useInput((ch, key) => {
     if (key.ctrl && ch === 'c') {
       if (running) {
-        setRunning(false);
-        setCurrentAction(null);
-        setMessages(prev => [...prev, { type: 'error', text: 'interrupted' }]);
+        wsRef.current?.send(JSON.stringify({ type: 'abort' }));
+        setMessages(prev => [...prev, { type: 'result', text: 'Stopping run...' }]);
+      } else {
+        exit();
       }
       return;
     }
 
     if (key.ctrl && ch === 'd') {
       exit();
+      return;
+    }
+
+    if (running && key.escape) {
+      wsRef.current?.send(JSON.stringify({ type: 'abort' }));
+      setMessages(prev => [...prev, { type: 'result', text: 'Stopping run...' }]);
       return;
     }
 
@@ -780,7 +802,7 @@ function App({ serverUrl, singleTask }) {
       {running && startTime && (
         <Box marginTop={0} marginLeft={2}>
           <Text dimColor>({timeAgo(startTime)} · iteration {iteration})</Text>
-          <Text dimColor>  · press t for {showTrace ? 'normal view' : 'trace tail'}</Text>
+          <Text dimColor>  · esc stops run · t for {showTrace ? 'normal view' : 'trace tail'}</Text>
         </Box>
       )}
 
@@ -839,7 +861,7 @@ function App({ serverUrl, singleTask }) {
           </Box>
           {!input.startsWith('/') && (
             <Box marginLeft={2}>
-              <Text dimColor>type / for commands · t toggles trace · exit to quit</Text>
+              <Text dimColor>type / for commands · /stop stops run · t toggles trace · exit to quit</Text>
             </Box>
           )}
           {input.startsWith('/') && suggestions.length > 0 && (
