@@ -76,6 +76,15 @@ def load_session(session_dir: Path, session_id: str = "latest") -> AgentState | 
     return state
 
 
+def _project_summary_path(session_dir: Path, project_name: str | None) -> Path | None:
+    if not project_name:
+        return None
+    safe = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in project_name.strip())
+    if not safe:
+        return None
+    return session_dir / f"last_session_{safe}.md"
+
+
 def save_session_summary(state: AgentState, session_dir: Path, session_id: str = "latest"):
     """Save a human-readable session summary for injection into next session.
 
@@ -84,6 +93,7 @@ def save_session_summary(state: AgentState, session_dir: Path, session_id: str =
     """
     session_dir.mkdir(parents=True, exist_ok=True)
     summary_path = session_dir / "last_session.md"
+    project_name = getattr(state, "active_project", None)
 
     # Extract key info from conversation
     task = ""
@@ -125,14 +135,16 @@ def save_session_summary(state: AgentState, session_dir: Path, session_id: str =
         summary += f"**Plan:** {state.plan.goal}\n"
 
     summary_path.write_text(summary)
+    project_summary_path = _project_summary_path(session_dir, project_name)
+    if project_summary_path is not None:
+        project_summary_path.write_text(summary)
     return summary_path
 
 
-def load_last_session_summary(session_dir: Path) -> str:
-    """Load the last session summary for injection into system prompt."""
-    summary_path = session_dir / "last_session.md"
-    if summary_path.exists():
-        # Only inject if less than 7 days old
+def load_last_session_summary(session_dir: Path, project_name: str | None = None) -> str:
+    """Load a recent project-scoped session summary for injection into the system prompt."""
+    summary_path = _project_summary_path(session_dir, project_name)
+    if summary_path and summary_path.exists():
         age_days = (time.time() - summary_path.stat().st_mtime) / 86400
         if age_days < 7:
             return summary_path.read_text()

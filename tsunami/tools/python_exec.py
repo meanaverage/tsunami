@@ -10,14 +10,15 @@ This is the single most impactful Manus feature.
 from __future__ import annotations
 
 import asyncio
+import builtins
 import io
 import logging
 import os
+import re
 import sys
 import traceback
-from contextlib import redirect_stdout, redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
-import re
 
 from ..docker_exec import docker_required, docker_requested, execute_python as execute_python_in_docker
 from .base import BaseTool, ToolResult
@@ -26,6 +27,11 @@ log = logging.getLogger("tsunami.python_exec")
 
 # Persistent namespace shared across calls
 _namespace = {}
+_PROTECTED_BUILTINS = (
+    "open", "print", "len", "enumerate", "range", "min", "max", "sum",
+    "list", "dict", "set", "tuple", "int", "float", "str", "zip",
+    "sorted", "any", "all", "isinstance", "repr",
+)
 
 
 def _looks_like_non_python_source(code: str) -> bool:
@@ -37,19 +43,38 @@ def _looks_like_non_python_source(code: str) -> bool:
         'import {',
         'from "./',
         'from "../',
-        'export default function',
-        'interface ',
-        'type ',
-        'return (',
-        '</div>',
-        '<section',
-        '<main',
-        '<div',
-        'className=',
-        'onClick=',
+        "export default function",
+        "interface ",
+        "type ",
+        "return (",
+        "</div>",
+        "<section",
+        "<main",
+        "<div",
+        "className=",
+        "onClick=",
     )
     score = sum(1 for marker in tsx_markers if marker in snippet)
     return score >= 2
+
+
+def _looks_like_frontend_file_write(code: str) -> bool:
+    normalized = code.replace("\\\\", "/")
+    frontend_suffixes = (".tsx", ".ts", ".css", ".jsx", ".js")
+    target_pattern = r'["\'][^"\']+\.(?:tsx|ts|css|jsx|js)["\']'
+
+    write_patterns = (
+        r"open\(\s*" + target_pattern + r"\s*,\s*['\"](?:w|a|x)",
+        r"Path\(\s*" + target_pattern + r"\s*\)\.write_text\(",
+        r"Path\(\s*" + target_pattern + r"\s*\)\.write_bytes\(",
+    )
+    if any(re.search(pattern, normalized) for pattern in write_patterns):
+        return True
+
+    return any(suffix in normalized for suffix in frontend_suffixes) and any(
+        marker in normalized
+        for marker in (".write_text(", ".write_bytes(", "open(", "with open(")
+    )
 
 
 def _error_hint(exc: Exception, code: str) -> str:
@@ -60,6 +85,18 @@ def _error_hint(exc: Exception, code: str) -> str:
             "Hint: one of your loops is unpacking the wrong tuple shape. "
             "If you append 3-tuples like (name, label, size), iterate with three variables "
             "or change the tuple to two values."
+        )
+    if isinstance(exc, TypeError) and "listdir() takes at most 1 argument" in message:
+        return (
+            "Hint: os.listdir accepts a single path argument. "
+            "Do not pass extra labels or metadata into listdir(). "
+            "If you are inspecting scaffold files repeatedly, stop probing and use file_write or file_edit "
+            "to replace src/App.tsx with the actual page composition."
+        )
+    if isinstance(exc, TypeError) and "object is not callable" in message:
+        return (
+            "Hint: you likely shadowed a Python builtin like open(), len(), or print() in the persistent interpreter. "
+            "Avoid rebinding builtin names, and prefer file_write or file_edit for TSX/CSS work."
         )
     if isinstance(exc, SyntaxError) and stripped.startswith("import "):
         return "Hint: this is multi-line Python, so exec() is the correct path; inspect the later traceback frame for the real runtime error."
@@ -80,11 +117,11 @@ def _execution_cwd() -> str:
 
 
 def _normalize_project_prefixed_code(code: str, exec_cwd: str) -> str:
-    """Rewrite workspace-prefixed paths to project-local paths when already inside a project.
+    """Rewrite workspace-prefixed paths to the active project's absolute path.
 
     The model often emits paths like ./workspace/deliverables/<project>/src/App.tsx
-    even though python_exec runs from that project's root. Inside the active project,
-    those paths should become ./src/App.tsx.
+    even though python_exec runs from that project's root. Rewriting these to the
+    absolute project root makes the code robust even if cwd drift occurs.
     """
     try:
         project_root = Path(exec_cwd).resolve()
@@ -123,26 +160,26 @@ def _normalize_project_prefixed_code(code: str, exec_cwd: str) -> str:
 
     normalized = code
     for prefix in prefixes:
-        normalized = normalized.replace(prefix, "./")
+        normalized = normalized.replace(prefix, f"{project_root_posix}/")
 
     normalized = re.sub(
         r"(?<![\w/])(?:\.?/)?workspace/deliverables/[^/\s'\"`]+/",
-        "./",
+        f"{project_root_posix}/",
         normalized,
     )
     normalized = re.sub(
         r"(?<![\w.])/workspace/deliverables/[^/\s'\"`]+/",
-        "./",
+        f"{project_root_posix}/",
         normalized,
     )
     normalized = re.sub(
         r"(?<![\w/])(?:\./)?workspace/tsunami/workspace/deliverables/[^/\s'\"`]+/",
-        "./",
+        f"{project_root_posix}/",
         normalized,
     )
     normalized = re.sub(
         rf"{re.escape(repo_root_posix)}/workspace/deliverables/[^/\s'\"`]+/",
-        "./",
+        f"{project_root_posix}/",
         normalized,
     )
 
@@ -152,7 +189,21 @@ def _normalize_project_prefixed_code(code: str, exec_cwd: str) -> str:
     normalized = re.sub(r"(?<![\w/])toolboxes/", f"{repo_root_posix}/toolboxes/", normalized)
     normalized = re.sub(r"(?<![\w/])\./README\.md", f"{repo_root_posix}/README.md", normalized)
     normalized = re.sub(r"(?<![\w/])README\.md", f"{repo_root_posix}/README.md", normalized)
+
+    duplicate_prefixes = [
+        f"{repo_root_posix}/{project_root_posix}",
+        f"{repo_root_posix}//{project_root_posix.lstrip('/')}",
+    ]
+    for duplicate in duplicate_prefixes:
+        normalized = normalized.replace(duplicate, project_root_posix)
+
     return normalized
+
+
+def _restore_protected_builtins() -> None:
+    _namespace["__builtins__"] = builtins.__dict__
+    for name in _PROTECTED_BUILTINS:
+        _namespace[name] = getattr(builtins, name)
 
 
 class PythonExec(BaseTool):
@@ -184,19 +235,29 @@ class PythonExec(BaseTool):
                 is_error=True,
             )
 
-        # Safety: block obviously destructive operations
-        blocked = ["shutil.rmtree", "os.remove", "os.unlink", "subprocess.call('rm"]
-        for b in blocked:
-            if b in code:
-                return ToolResult(f"BLOCKED: {b} is not allowed in python_exec", is_error=True)
+        if _looks_like_frontend_file_write(code):
+            return ToolResult(
+                "python_exec is not for writing frontend source files. "
+                "Use file_write to create full src/*.tsx or CSS files, and use file_edit for small targeted changes. "
+                "Reserve python_exec for data processing, filesystem inspection, and calculations.",
+                is_error=True,
+            )
 
-        # Capture stdout/stderr
+        blocked = ["shutil.rmtree", "os.remove", "os.unlink", "subprocess.call('rm"]
+        for blocked_item in blocked:
+            if blocked_item in code:
+                return ToolResult(f"BLOCKED: {blocked_item} is not allowed in python_exec", is_error=True)
+
         stdout_buf = io.StringIO()
         stderr_buf = io.StringIO()
 
-        # Inject useful defaults into namespace (persistent across calls)
         if "os" not in _namespace:
-            import json, csv, re, math, datetime, collections
+            import collections
+            import csv
+            import datetime
+            import importlib
+            import json
+            import math
 
             _namespace["os"] = os
             _namespace["json"] = json
@@ -205,8 +266,11 @@ class PythonExec(BaseTool):
             _namespace["math"] = math
             _namespace["datetime"] = datetime
             _namespace["collections"] = collections
+            _namespace["importlib"] = importlib
             _namespace["Path"] = Path
-            _namespace["__builtins__"] = __builtins__
+            _namespace["sys"] = sys
+
+        _restore_protected_builtins()
 
         ark_dir = str(Path(__file__).parent.parent.parent)
         exec_cwd = _execution_cwd()
@@ -232,14 +296,11 @@ class PythonExec(BaseTool):
 
         try:
             with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
-                # Use exec for statements, eval for expressions
                 try:
-                    # Try eval first (single expression)
                     result = eval(code, _namespace)
                     if result is not None:
                         print(repr(result), file=stdout_buf)
                 except SyntaxError:
-                    # Fall back to exec (multiple statements)
                     exec(code, _namespace)
 
             stdout = stdout_buf.getvalue().strip()
@@ -252,20 +313,18 @@ class PythonExec(BaseTool):
             if not output:
                 output = "(no output — code executed successfully)"
 
-            # Truncate massive output
             if len(output) > 8000:
                 output = output[:8000] + "\n... [TRUNCATED]"
 
             return ToolResult(output)
 
-        except Exception as e:
+        except Exception as exc:
             tb = traceback.format_exc()
-            # Keep last 500 chars of traceback
             if len(tb) > 500:
                 tb = "..." + tb[-500:]
-            hint = _error_hint(e, code)
+            hint = _error_hint(exc, code)
             extra = f"\n{hint}" if hint else ""
-            return ToolResult(f"Error: {e}{extra}\n{tb}", is_error=True)
+            return ToolResult(f"Error: {exc}{extra}\n{tb}", is_error=True)
         finally:
             try:
                 os.chdir(prev_cwd)

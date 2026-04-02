@@ -11,6 +11,7 @@ import subprocess
 import sys
 import shutil
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 
 from ..config import resolve_aux_model_endpoint
@@ -65,6 +66,37 @@ def normalize_screenshot_output_path(output_path: str) -> tuple[str, str | None]
 
     corrected = str(out.with_name(f"{out.name}.png"))
     return corrected, f"Adjusted screenshot output path from {output_path or 'screenshot'} to {corrected}."
+
+
+def _default_screenshot_output_path(workspace_dir: str, requested_output_path: str) -> Path:
+    """Route default screenshots into the active project's QA folder when possible."""
+    from .plan import get_agent_state
+
+    state = get_agent_state()
+    active_project = getattr(state, "active_project", "") if state is not None else ""
+    active_project_root = getattr(state, "active_project_root", "") if state is not None else ""
+
+    normalized_output_path, _ = normalize_screenshot_output_path(requested_output_path)
+    out = Path(normalized_output_path)
+    if out.is_absolute():
+        return out
+
+    ws = Path(workspace_dir)
+
+    # Respect caller-provided relative directories. Only remap the simple default names.
+    if out.parent != Path("."):
+        return ws / out
+
+    stem = out.stem.lower()
+    if stem not in {"screenshot", "screenshot.html"} and not stem.startswith("screenshot"):
+        return ws / out
+
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    if active_project and active_project_root:
+        qa_dir = Path(active_project_root) / ".qa"
+        return qa_dir / f"{active_project}-screenshot-{timestamp}.png"
+
+    return ws / f"screenshot-{timestamp}.png"
 
 
 def _kill_port(port: int) -> None:
@@ -552,11 +584,12 @@ class WebdevScreenshot(BaseTool):
                       output_path: str = "screenshot.png",
                       full_page: bool = True,
                       width: int = 1440, height: int = 900, **kw) -> ToolResult:
-        ws = Path(self.config.workspace_dir)
         normalized_output_path, path_note = normalize_screenshot_output_path(output_path)
-        out = Path(normalized_output_path)
-        if not out.is_absolute():
-            out = ws / out
+        normalized_path_obj = Path(normalized_output_path)
+        out = _default_screenshot_output_path(self.config.workspace_dir, normalized_output_path)
+        if normalized_path_obj.parent == Path(".") and out != Path(self.config.workspace_dir) / normalized_path_obj:
+            reroute_note = f"Saving screenshot under {out}."
+            path_note = f"{path_note}\n{reroute_note}" if path_note else reroute_note
         out.parent.mkdir(parents=True, exist_ok=True)
 
         if docker_requested():

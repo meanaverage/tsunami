@@ -74,6 +74,7 @@ Time: {now}
 7. Keep App.tsx wired as components land. Do not leave a stub at delivery time.
 8. shell_exec "cd ./workspace/deliverables/<project> && npx vite build" — must compile clean
 9. If errors: fix, rebuild. Deliver only when clean.
+10. For any TSX/TS/CSS source file creation or replacement, prefer file_write. Use file_edit only for small targeted changes. Do NOT use python_exec to write frontend source files.
 CSS: .container .card .grid .grid-2/3/4 .flex .gap-2/4/6 .text-center .text-muted .mt-4 .mb-4 .p-4
 
 # Paths
@@ -83,6 +84,7 @@ CSS: .container .card .grid .grid-2/3/4 .flex .gap-2/4/6 .text-center .text-mute
 - Once a project is active, python_exec runs from that project's root.
 - Inside python_exec, use project-local paths like src/App.tsx or src/components/Hero.tsx.
 - Inside python_exec, do NOT use ./workspace/deliverables/<project>/... paths.
+- python_exec is for calculations, inspection, and small data transforms — not for authoring TSX/CSS source files.
 - For webdev_screenshot, use an image output path like screenshot.png, hero.png, or qa/homepage.png.
 
 # Reference (read from {context_dir}/ when needed)

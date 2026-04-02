@@ -216,6 +216,18 @@ TSUNAMI_MAX_TOKENS=8000 ./tsu
 changes the backend generation cap for model responses.
 
 ```bash
+TSUNAMI_TEMPERATURE=0.2 TSUNAMI_PRESENCE_PENALTY=0.0 ./tsu
+```
+
+uses a more deterministic sampling profile, which is usually better for tool calling on local models.
+
+```bash
+TSUNAMI_TEMPERATURE=0.0 TSUNAMI_TOP_P=1.0 ./tsu
+```
+
+pushes the local model even harder toward deterministic tool selection if it is getting too creative.
+
+```bash
 TSUNAMI_DOCKER_REBUILD=0 TSUNAMI_DOCKER_BACKEND=1 ./tsu
 ```
 

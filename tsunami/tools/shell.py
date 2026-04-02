@@ -124,6 +124,27 @@ def _command_looks_project_local(command: str) -> bool:
     return any(marker in command for marker in local_markers)
 
 
+def _normalize_active_project_shorthand(command: str) -> str:
+    """Rewrite ./<active-project>/... shorthand to repo-relative deliverables paths."""
+    active_project_cwd = _active_project_cwd()
+    if not active_project_cwd:
+        return command
+
+    project_name = Path(active_project_cwd).name
+    if not project_name:
+        return command
+
+    patterns = [
+        (rf"(?<![\w./-])\./{re.escape(project_name)}/", f"./workspace/deliverables/{project_name}/"),
+        (rf"(?<![\w./-]){re.escape(project_name)}/", f"./workspace/deliverables/{project_name}/"),
+    ]
+
+    normalized = command
+    for pattern, replacement in patterns:
+        normalized = re.sub(pattern, replacement, normalized)
+    return normalized
+
+
 class ShellExec(BaseTool):
     name = "shell_exec"
     description = "Run a shell command and return its output. The muscle: do the thing."
@@ -141,6 +162,7 @@ class ShellExec(BaseTool):
 
     async def execute(self, command: str, timeout: int = 3600, workdir: str = "", **kw) -> ToolResult:
         command = _normalize_workspace_paths(command)
+        command = _normalize_active_project_shorthand(command)
 
         # Destructive command detection
         import re

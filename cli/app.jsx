@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { render, Box, Text, useInput, useApp, useStdout } from 'ink';
 import TextInput from 'ink-text-input';
@@ -7,7 +6,7 @@ import WebSocket from 'ws';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { execSync, spawn } from 'child_process';
+import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -33,7 +32,7 @@ const TOOL_LABELS = {
 };
 
 const COMMANDS = [
-  { cmd: '/project', desc: 'list / switch / create projects', takesArgs: true },
+  { cmd: '/project', desc: 'list / switch / create / delete projects', takesArgs: true },
   { cmd: '/serve', desc: 'host active project on localhost', takesArgs: true },
   { cmd: '/stop', desc: 'stop the active run', takesArgs: false },
   { cmd: '/attach', desc: 'attach a file or image', takesArgs: true },
@@ -339,6 +338,16 @@ function App({ serverUrl, singleTask }) {
         setMessages(prev => [...prev, { type: 'result', text: msg.message }]);
       }
 
+      if (msg.type === 'project_state') {
+        if (msg.name) setActiveProject(msg.name);
+      }
+
+      if (msg.type === 'project_deleted') {
+        if (msg.name) {
+          setActiveProject(prev => (prev === msg.name ? null : prev));
+        }
+      }
+
       if (msg.type === 'step') {
         setIteration(msg.iteration);
         const nextTraceEntries = [];
@@ -549,7 +558,7 @@ function App({ serverUrl, singleTask }) {
 
     if (cmd === '/help') {
       setMessages(prev => [...prev, { type: 'user', text }, { type: 'result', text:
-        'Commands:\n  /project              list / switch / create projects\n  /project <name>       switch to project\n  /project new <name>   create new project\n  /serve [port]         serve active project\n  /stop                 stop the active run\n  /attach <path>        attach a file or image\n  /unattach <target>    remove an attached file\n  /help                 this message\n  exit                  quit\n\nAnything else goes to the agent.'
+        'Commands:\n  /project              list / switch / create projects\n  /project <name>       switch to project\n  /project new <name>   create new project\n  /project delete <name> delete a project\n  /serve [port]         serve active project\n  /stop                 stop the active run\n  /attach <path>        attach a file or image\n  /unattach <target>    remove an attached file\n  /help                 this message\n  exit                  quit\n\nAnything else goes to the agent.'
       }]);
       return true;
     }
@@ -565,72 +574,14 @@ function App({ serverUrl, singleTask }) {
     }
 
     if (cmd === '/project') {
-      const deliverablesDir = path.resolve(ARK_DIR, 'workspace/deliverables');
-
-      if (argWords.length === 0 || argWords[0] === 'list') {
-        try {
-          const entries = fs.readdirSync(deliverablesDir).filter(entry => {
-            try {
-              return fs.statSync(path.join(deliverablesDir, entry)).isDirectory() && !entry.startsWith('.');
-            } catch {
-              return false;
-            }
-          });
-          const listing = entries.length
-            ? entries.map(entry => {
-                const hasTsunamiMd = fs.existsSync(path.join(deliverablesDir, entry, 'tsunami.md'));
-                const active = entry === activeProject ? ' <- active' : '';
-                return `  ${hasTsunamiMd ? '●' : '○'} ${entry}${active}`;
-              }).join('\n')
-            : '  No projects yet. Use /project new <name>';
-          setMessages(prev => [...prev, { type: 'user', text }, { type: 'result', text: `Projects:\n${listing}` }]);
-        } catch {
-          setMessages(prev => [...prev, { type: 'user', text }, { type: 'result', text: 'No projects directory found.' }]);
-        }
-        return true;
-      }
-
-      if (argWords[0] === 'new' && argWords[1]) {
-        const name = argWords.slice(1).join(' ');
-        const projectDir = path.join(deliverablesDir, name);
-        fs.mkdirSync(projectDir, { recursive: true });
-        fs.writeFileSync(path.join(projectDir, 'tsunami.md'), `# ${name}\n\nNew project.\n`);
-        setActiveProject(name);
-        setMessages(prev => [...prev, { type: 'user', text }, { type: 'result', text: `Created project: ${name}` }]);
-        return true;
-      }
-
-      const name = argText;
-      const projectDir = path.join(deliverablesDir, name);
-      if (!fs.existsSync(projectDir) || !fs.statSync(projectDir).isDirectory()) {
-        setMessages(prev => [...prev, { type: 'user', text }, { type: 'error', text: `Project '${name}' not found` }]);
-        return true;
-      }
-
-      setActiveProject(name);
-      const contextPath = path.join(projectDir, 'tsunami.md');
-      const context = fs.existsSync(contextPath) ? fs.readFileSync(contextPath, 'utf-8') : 'No tsunami.md';
-      const files = fs.readdirSync(projectDir).filter(file => file !== 'tsunami.md');
-      setMessages(prev => [...prev, {
-        type: 'user',
-        text,
-      }, {
-        type: 'result',
-        text: `Active: ${name}\n\n${context}\n\nFiles: ${files.join(', ') || 'none'}`,
-      }]);
+      wsRef.current?.send(JSON.stringify({ type: 'command', command: text }));
+      setMessages(prev => [...prev, { type: 'user', text }]);
       return true;
     }
 
     if (cmd === '/serve') {
-      const port = argWords[0] || '8080';
-      const serveDir = activeProject
-        ? path.resolve(ARK_DIR, 'workspace/deliverables', activeProject)
-        : path.resolve(ARK_DIR, 'workspace/deliverables');
-      spawn('python3', ['-m', 'http.server', port, '--directory', serveDir], {
-        detached: true,
-        stdio: 'ignore',
-      }).unref();
-      setMessages(prev => [...prev, { type: 'user', text }, { type: 'result', text: `Serving on http://localhost:${port}` }]);
+      wsRef.current?.send(JSON.stringify({ type: 'command', command: text }));
+      setMessages(prev => [...prev, { type: 'user', text }]);
       return true;
     }
 
@@ -924,7 +875,7 @@ function MessageView({ msg, cols }) {
         <Box marginLeft={2}>
           <Text wrap="wrap">{msg.text}</Text>
         </Box>
-        {msg.iters && (
+        {msg.iters != null && (
           <Box marginLeft={2} marginTop={0}>
             <Text color="#4a9eff">OK completed ({msg.iters} {msg.iters === 1 ? 'iteration' : 'iterations'})</Text>
           </Box>
@@ -937,7 +888,7 @@ function MessageView({ msg, cols }) {
     return (
       <Box flexDirection="column" marginLeft={2} marginTop={1}>
         <Text color="red" wrap="wrap">ERR {msg.text}</Text>
-        {msg.iters && (
+        {msg.iters != null && (
           <Box marginTop={0}>
             <Text color="redBright">Failed after {msg.iters} {msg.iters === 1 ? 'iteration' : 'iterations'}</Text>
           </Box>

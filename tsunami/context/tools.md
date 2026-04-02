@@ -21,12 +21,13 @@ Read this when you're unsure which tool to use.
 - python_exec: persistent Python interpreter. Use for data processing, calculations.
 - If a project is active, python_exec runs from that project root.
 - In python_exec, use project-local paths like `src/App.tsx`, not `./workspace/deliverables/<project>/src/App.tsx`.
+- Do NOT use python_exec to write TSX/TS/CSS files. For frontend source files, prefer file_write; for small targeted changes, use file_edit.
 - shell_exec: run commands. Simple one-liners only. Multi-line → save to file first.
 
 ## Files
 - file_read: read content (truncated at 8K for large files)
-- file_write: create or fully rewrite
-- file_edit: change <30% of a file
+- file_write: create or fully rewrite. Default choice for `src/App.tsx`, `src/components/*.tsx`, `src/types.ts`, and CSS source files.
+- file_edit: change <30% of a file. Use after the file already exists and you only need a small patch.
 - match_glob: find files by pattern
 - match_grep: search contents by regex
 - summarize_file: fast summary via 2B eddy (saves context)

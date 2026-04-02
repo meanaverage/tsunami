@@ -9,7 +9,7 @@ fi
 TSUNAMI_DOCKER_BACKEND="${TSUNAMI_DOCKER_BACKEND:-auto}"
 TSUNAMI_DOCKER_IMAGE="${TSUNAMI_DOCKER_IMAGE:-tsunami-exec:latest}"
 TSUNAMI_DOCKER_ROOT="${TSUNAMI_DOCKER_ROOT:-/workspace/tsunami}"
-TSUNAMI_DOCKER_REBUILD="${TSUNAMI_DOCKER_REBUILD:-1}"
+TSUNAMI_DOCKER_REBUILD="${TSUNAMI_DOCKER_REBUILD:-0}"
 TSUNAMI_CTX_SIZE="${TSUNAMI_CTX_SIZE:-32768}"
 STARTED_DOCKER_BACKEND=0
 
@@ -56,12 +56,51 @@ docker_container_running() {
   docker inspect -f '{{.State.Running}}' "$(docker_container_name)" 2>/dev/null | grep -q '^true$'
 }
 
+docker_container_logs_indicate_ready() {
+  docker logs "$(docker_container_name)" 2>&1 | grep -q 'Uvicorn running on http://0.0.0.0:3000'
+}
+
+resolve_model_path() {
+  local requested="$1"
+  [ -n "$requested" ] || return 1
+
+  if [ -f "$requested" ]; then
+    printf '%s\n' "$requested"
+    return 0
+  fi
+
+  if [ -f "models/$requested" ]; then
+    printf '%s\n' "models/$requested"
+    return 0
+  fi
+
+  return 1
+}
+
+resolve_mmproj_for_model() {
+  local model_path="$1"
+  case "$(basename "$model_path")" in
+    *27B*)
+      ls models/mmproj-27B*.gguf models/mmproj-BF16.gguf models/mmproj-F16.gguf 2>/dev/null | head -1
+      ;;
+    *9B*|*8B*)
+      ls models/mmproj-9B-BF16.gguf models/mmproj-BF16.gguf models/mmproj-F16.gguf 2>/dev/null | head -1
+      ;;
+    *2B*)
+      ls models/mmproj-2B-BF16.gguf models/mmproj-BF16.gguf models/mmproj-F16.gguf 2>/dev/null | head -1
+      ;;
+    *)
+      ls models/mmproj-BF16.gguf models/mmproj-F16.gguf models/mmproj-9B-BF16.gguf models/mmproj-27B*.gguf models/mmproj-2B-BF16.gguf 2>/dev/null | head -1
+      ;;
+  esac
+}
+
 ensure_docker_image() {
   if [ "$TSUNAMI_DOCKER_REBUILD" != "1" ] && docker image inspect "$TSUNAMI_DOCKER_IMAGE" >/dev/null 2>&1; then
     return 0
   fi
   echo "  building Docker backend image: $TSUNAMI_DOCKER_IMAGE"
-  docker build -t "$TSUNAMI_DOCKER_IMAGE" -f "$DIR/docker/exec.Dockerfile" "$DIR"
+  docker build --progress=plain -t "$TSUNAMI_DOCKER_IMAGE" -f "$DIR/docker/exec.Dockerfile" "$DIR"
 }
 
 docker_port_publish_args() {
@@ -249,6 +288,9 @@ export TSUNAMI_MODEL_ENDPOINT="http://localhost:8090"
 export TSUNAMI_WATCHER_ENDPOINT="$BEE_ENDPOINT"
 export TSUNAMI_BEE_ENDPOINT="$BEE_ENDPOINT"
 export TSUNAMI_MAX_TOKENS="${TSUNAMI_MAX_TOKENS:-1024}"
+export TSUNAMI_TEMPERATURE="${TSUNAMI_TEMPERATURE:-0.2}"
+export TSUNAMI_TOP_P="${TSUNAMI_TOP_P:-0.8}"
+export TSUNAMI_PRESENCE_PENALTY="${TSUNAMI_PRESENCE_PENALTY:-0.0}"
 export TSUNAMI_ACTIVE_MODEL_NAME=""
 export TSUNAMI_ACTIVE_WATCHER_MODEL_NAME=""
 
@@ -273,34 +315,57 @@ if ! check_model; then
   RAM_GB="$(detect_ram_gb)"
   FORCE_SMALL="${TSUNAMI_FORCE_SMALL_MODEL:-0}"
 
-  # Model priority: prefer repo-local 2B on smaller systems, 27B only when there is headroom.
+  # Model priority:
+  # - explicit override wins
+  # - prefer 9B/8B class if present
+  # - otherwise prefer 27B over 2B on machines with enough RAM
   DENSE_27B=$(ls models/Qwen3.5-27B*.gguf 2>/dev/null | head -1)
-  MMPROJ_27B=$(ls models/mmproj-27B*.gguf models/mmproj-BF16.gguf models/mmproj-F16.gguf 2>/dev/null | head -1)
   MOE_MODEL=$(ls models/*122B*-00001-of-*.gguf 2>/dev/null | head -1)
-  TEXT_MODEL=$(ls models/Qwen3*-9B*.gguf models/Qwen3*-8B*.gguf models/Qwen3*-2B*.gguf 2>/dev/null | head -1)
-  MMPROJ_SMALL=$(ls models/mmproj-2B-BF16.gguf models/mmproj-BF16.gguf models/mmproj-F16.gguf 2>/dev/null | head -1)
+  TEXT_9B=$(ls models/Qwen3*-9B*.gguf 2>/dev/null | head -1)
+  TEXT_8B=$(ls models/Qwen3*-8B*.gguf 2>/dev/null | head -1)
+  TEXT_2B=$(ls models/Qwen3*-2B*.gguf 2>/dev/null | head -1)
+  MEDIUM_TEXT="${TEXT_9B:-$TEXT_8B}"
+  TEXT_MODEL="${MEDIUM_TEXT:-$TEXT_2B}"
 
   PREFERRED_WAVE=""
   WAVE_MMPROJ=""
   WAVE_CACHE_K=""
   WAVE_CACHE_V=""
+  WAVE_OVERRIDE="${TSUNAMI_WAVE_MODEL:-}"
+  BEE_OVERRIDE="${TSUNAMI_BEE_MODEL:-}"
 
-  if [ "$FORCE_SMALL" = "1" ] && [ -n "$TEXT_MODEL" ]; then
-    PREFERRED_WAVE="$TEXT_MODEL"
-    WAVE_MMPROJ="$MMPROJ_SMALL"
-  elif [ -n "$DENSE_27B" ] && [ "$RAM_GB" -ge 48 ] 2>/dev/null; then
+  if [ -n "$WAVE_OVERRIDE" ]; then
+    PREFERRED_WAVE="$(resolve_model_path "$WAVE_OVERRIDE")"
+    if [ -z "$PREFERRED_WAVE" ]; then
+      echo "  requested wave model not found: $WAVE_OVERRIDE"
+      exit 1
+    fi
+    WAVE_MMPROJ="$(resolve_mmproj_for_model "$PREFERRED_WAVE")"
+    case "$(basename "$PREFERRED_WAVE")" in
+      *27B*)
+        WAVE_CACHE_K="bf16"
+        WAVE_CACHE_V="bf16"
+        ;;
+    esac
+  elif [ "$FORCE_SMALL" = "1" ] && [ -n "$TEXT_2B" ]; then
+    PREFERRED_WAVE="$TEXT_2B"
+    WAVE_MMPROJ="$(resolve_mmproj_for_model "$PREFERRED_WAVE")"
+  elif [ -n "$MEDIUM_TEXT" ]; then
+    PREFERRED_WAVE="$MEDIUM_TEXT"
+    WAVE_MMPROJ="$(resolve_mmproj_for_model "$PREFERRED_WAVE")"
+  elif [ -n "$DENSE_27B" ] && [ "$RAM_GB" -ge 32 ] 2>/dev/null; then
     PREFERRED_WAVE="$DENSE_27B"
-    WAVE_MMPROJ="$MMPROJ_27B"
+    WAVE_MMPROJ="$(resolve_mmproj_for_model "$PREFERRED_WAVE")"
     WAVE_CACHE_K="bf16"
     WAVE_CACHE_V="bf16"
-  elif [ -n "$TEXT_MODEL" ]; then
-    PREFERRED_WAVE="$TEXT_MODEL"
-    WAVE_MMPROJ="$MMPROJ_SMALL"
   elif [ -n "$DENSE_27B" ]; then
     PREFERRED_WAVE="$DENSE_27B"
-    WAVE_MMPROJ="$MMPROJ_27B"
+    WAVE_MMPROJ="$(resolve_mmproj_for_model "$PREFERRED_WAVE")"
     WAVE_CACHE_K="bf16"
     WAVE_CACHE_V="bf16"
+  elif [ -n "$TEXT_2B" ]; then
+    PREFERRED_WAVE="$TEXT_2B"
+    WAVE_MMPROJ="$(resolve_mmproj_for_model "$PREFERRED_WAVE")"
   fi
 
   if [ -n "$MOE_MODEL" ] && [ -f "$LLAMA" ] && [ -z "$PREFERRED_WAVE" ]; then
@@ -324,7 +389,7 @@ if ! check_model; then
       if [ -n "$DENSE_27B" ] && [ "$PREFERRED_WAVE" = "$DENSE_27B" ] && [ -n "$TEXT_MODEL" ]; then
         kill "$MODEL_PID" 2>/dev/null || true
         echo "  27B wave failed to load; falling back to $(basename "$TEXT_MODEL")"
-        MODEL_PID="$(start_llama_server 8090 "$TEXT_MODEL" "$MMPROJ_SMALL" "" "")"
+        MODEL_PID="$(start_llama_server 8090 "$TEXT_MODEL" "$(resolve_mmproj_for_model "$TEXT_MODEL")" "" "")"
         export TSUNAMI_ACTIVE_MODEL_NAME="$(basename "$TEXT_MODEL")"
         if ! wait_for_health 8090 120 "/tmp/llama-server-8090.log" "${MODEL_PID:-}" "wave"; then
           echo "  local model failed to come up on :8090; see /tmp/llama-server-8090.log"
@@ -337,13 +402,26 @@ if ! check_model; then
 
   # Dedicated bee on :8092 when possible, otherwise route all bee traffic to :8090.
   if curl -sf http://localhost:8090/health > /dev/null 2>&1; then
-    if [ -n "$TEXT_MODEL" ] && [ "$PREFERRED_WAVE" != "$TEXT_MODEL" ] && [ -f "$LLAMA" ]; then
+    BEE_MODEL=""
+    if [ -n "$BEE_OVERRIDE" ]; then
+      BEE_MODEL="$(resolve_model_path "$BEE_OVERRIDE")"
+      if [ -z "$BEE_MODEL" ]; then
+        echo "  requested bee model not found: $BEE_OVERRIDE"
+        exit 1
+      fi
+    elif [ -n "$TEXT_2B" ] && [ "$PREFERRED_WAVE" != "$TEXT_2B" ]; then
+      BEE_MODEL="$TEXT_2B"
+    elif [ -n "$TEXT_MODEL" ] && [ "$PREFERRED_WAVE" != "$TEXT_MODEL" ]; then
+      BEE_MODEL="$TEXT_MODEL"
+    fi
+
+    if [ -n "$BEE_MODEL" ] && [ -f "$LLAMA" ]; then
       clear_stale_llama_port 8092 || true
-      echo "  starting bee on :8092 -> $(basename "$TEXT_MODEL")"
-      BEE_PID="$(start_llama_server 8092 "$TEXT_MODEL" "$MMPROJ_SMALL" "" "")"
+      echo "  starting bee on :8092 -> $(basename "$BEE_MODEL")"
+      BEE_PID="$(start_llama_server 8092 "$BEE_MODEL" "$(resolve_mmproj_for_model "$BEE_MODEL")" "" "")"
       if wait_for_health 8092 60 "/tmp/llama-server-8092.log" "${BEE_PID:-}" "bee"; then
         BEE_ENDPOINT="http://localhost:8092"
-        export TSUNAMI_ACTIVE_WATCHER_MODEL_NAME="$(basename "$TEXT_MODEL")"
+        export TSUNAMI_ACTIVE_WATCHER_MODEL_NAME="$(basename "$BEE_MODEL")"
       else
         kill "$BEE_PID" 2>/dev/null || true
         BEE_PID=""
@@ -397,6 +475,10 @@ if ! curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
           BACKEND_READY=1
           break
         fi
+        if docker_container_running && docker_container_logs_indicate_ready; then
+          BACKEND_READY=1
+          break
+        fi
         sleep 0.5
       done
     fi
@@ -430,8 +512,17 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Launch frontend — Ink CLI if the backend is ready, Python fallback otherwise
-if [ -x "$DIR/cli/node_modules/.bin/tsx" ] && [ "$BACKEND_READY" = "1" ]; then
+# Launch frontend — prefer the built Ink CLI bundle, fall back to tsx for development.
+if [ -f "$DIR/cli/dist/tsunami.cjs" ] && [ "$BACKEND_READY" = "1" ]; then
+  if docker_backend_requested && docker_container_running; then
+    echo "  launching Tsunami UI (bundle)"
+  fi
+  cd "$DIR/cli"
+  exec node "$DIR/cli/dist/tsunami.cjs" "$@"
+elif [ -x "$DIR/cli/node_modules/.bin/tsx" ] && [ "$BACKEND_READY" = "1" ]; then
+  if docker_backend_requested && docker_container_running; then
+    echo "  launching Tsunami UI (tsx)"
+  fi
   cd "$DIR/cli"
   exec "$DIR/cli/node_modules/.bin/tsx" app.jsx "$@"
 else

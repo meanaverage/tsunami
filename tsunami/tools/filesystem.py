@@ -6,6 +6,7 @@ Everything important must be saved to files as it's discovered.
 
 from __future__ import annotations
 
+import difflib
 from pathlib import Path
 
 from .base import BaseTool, ToolResult
@@ -276,7 +277,30 @@ class FileEdit(BaseTool):
                     p.write_text(new_content)
                     return ToolResult(f"Edited {p}: replaced 1 occurrence (quote-normalized match)")
 
-                return ToolResult(f"Text not found in {path}. Make sure old_text matches exactly (check whitespace and quotes).", is_error=True)
+                old_lines = [line.strip() for line in old_text.splitlines() if line.strip()]
+                content_lines = content.splitlines()
+                close_matches: list[str] = []
+                if old_lines:
+                    query = max(old_lines, key=len)
+                    scored = []
+                    for idx, line in enumerate(content_lines, 1):
+                        candidate = line.rstrip()
+                        if not candidate.strip():
+                            continue
+                        ratio = difflib.SequenceMatcher(None, query, candidate.strip()).ratio()
+                        if ratio >= 0.45:
+                            scored.append((ratio, idx, candidate))
+                    scored.sort(reverse=True)
+                    for ratio, idx, candidate in scored[:3]:
+                        close_matches.append(f"  line {idx}: {candidate[:180]}")
+
+                message = (
+                    f"Text not found in {path}. file_edit requires an exact match. "
+                    "Re-read the file, copy the exact current text, and retry."
+                )
+                if close_matches:
+                    message += "\nClosest lines:\n" + "\n".join(close_matches)
+                return ToolResult(message, is_error=True)
             if count > 1:
                 return ToolResult(
                     f"Ambiguous: '{old_text[:60]}...' found {count} times. Provide more context.",

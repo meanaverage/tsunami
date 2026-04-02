@@ -142,6 +142,7 @@ class ProjectInit(BaseTool):
                 shutil.copytree(
                     scaffold_dir,
                     project_dir,
+                    dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns("node_modules", "dist", ".vite", "package-lock.json"),
                 )
                 log.info(f"Copied scaffold '{scaffold_name}' → {project_dir}")
