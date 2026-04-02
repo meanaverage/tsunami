@@ -92,6 +92,19 @@ if ! check_model; then
 fi
 
 # Start Python WebSocket backend if not running
+BACKEND_READY=0
+if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
+  # If a stale backend is running without WebSocket support, stop it so this launcher
+  # can restart the server from the current virtualenv.
+  if [ -f /tmp/tsunami_server.pid ]; then
+    EXISTING_SERVER_PID="$(cat /tmp/tsunami_server.pid 2>/dev/null || true)"
+    if [ -n "$EXISTING_SERVER_PID" ]; then
+      kill "$EXISTING_SERVER_PID" 2>/dev/null || true
+      sleep 1
+    fi
+  fi
+fi
+
 if ! curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
   "$PYTHON_BIN" -c "
 import sys; sys.path.insert(0,'$DIR')
@@ -99,10 +112,16 @@ from tsunami.server import start_server
 start_server(host='0.0.0.0', port=3000)
 " > /tmp/tsunami_server.log 2>&1 &
   SERVER_PID=$!
+  echo "$SERVER_PID" > /tmp/tsunami_server.pid
   for i in $(seq 1 10); do
-    curl -sf http://localhost:3000/api/health > /dev/null 2>&1 && break
+    if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
+      BACKEND_READY=1
+      break
+    fi
     sleep 0.5
   done
+else
+  BACKEND_READY=1
 fi
 
 cleanup() {
@@ -111,11 +130,17 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Launch frontend — Ink CLI if Node available, Python fallback otherwise
-if [ -x "$DIR/cli/node_modules/.bin/tsx" ]; then
+# Launch frontend — Ink CLI if the backend is ready, Python fallback otherwise
+if [ -x "$DIR/cli/node_modules/.bin/tsx" ] && [ "$BACKEND_READY" = "1" ]; then
   cd "$DIR/cli"
   exec "$DIR/cli/node_modules/.bin/tsx" app.jsx "$@"
 else
+  if [ -x "$DIR/cli/node_modules/.bin/tsx" ] && [ "$BACKEND_READY" != "1" ]; then
+    echo "  backend failed to start; falling back to Python REPL"
+    if [ -f /tmp/tsunami_server.log ]; then
+      echo "  see /tmp/tsunami_server.log for details"
+    fi
+  fi
   # Python fallback — simple REPL that talks to the agent
   cd "$DIR"
   exec "$PYTHON_BIN" -c "
