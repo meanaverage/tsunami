@@ -933,8 +933,8 @@ function StatusView({ connected, health }) {
   const backendOk = connected && health?.backend_ok !== false;
   const backendMode = health?.backend_mode;
   const modelOk = Boolean(health?.model_ok);
-  const watcherEnabled = Boolean(health?.watcher_enabled);
-  const watcherOk = health?.watcher_ok;
+  const eddyEnabled = Boolean(health?.eddy_enabled ?? health?.watcher_enabled);
+  const eddyOk = health?.eddy_ok ?? health?.watcher_ok;
 
   return (
     <Box flexDirection="column" marginLeft={2}>
@@ -956,12 +956,18 @@ function StatusView({ connected, health }) {
             <Text dimColor>{health.model_name}</Text>
           </>
         )}
-        {watcherEnabled && (
+        {eddyEnabled && (
           <>
             <Text dimColor> · </Text>
-            <Text color={watcherOk ? 'green' : 'yellow'}>
-              bee {watcherOk ? 'ready' : 'fallback'}
+            <Text color={eddyOk ? 'green' : 'yellow'}>
+              eddy {eddyOk ? 'ready' : 'fallback'}
             </Text>
+            {health?.eddy_model && (
+              <>
+                <Text dimColor> · </Text>
+                <Text dimColor>{health.eddy_model}</Text>
+              </>
+            )}
           </>
         )}
       </Box>
@@ -978,13 +984,13 @@ function StatusView({ connected, health }) {
         </Box>
       )}
 
-      {watcherEnabled && health?.watcher_endpoint && !watcherOk && (
+      {eddyEnabled && (health?.eddy_endpoint || health?.watcher_endpoint) && !eddyOk && (
         <Box>
-          <Text dimColor>bee endpoint: {health.watcher_endpoint}</Text>
-          {health?.watcher_error ? (
+          <Text dimColor>eddy endpoint: {health.eddy_endpoint || health.watcher_endpoint}</Text>
+          {health?.eddy_error || health?.watcher_error ? (
             <>
               <Text dimColor> · </Text>
-              <Text color="yellow" wrap="wrap">{health.watcher_error}</Text>
+              <Text color="yellow" wrap="wrap">{health.eddy_error || health.watcher_error}</Text>
             </>
           ) : null}
         </Box>

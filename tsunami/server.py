@@ -170,6 +170,11 @@ async def health():
         "watcher_ok": watcher_ok,
         "watcher_model": active_watcher_model_name,
         "watcher_error": watcher_error,
+        "eddy_enabled": cfg.watcher_enabled,
+        "eddy_endpoint": cfg.watcher_endpoint,
+        "eddy_ok": watcher_ok,
+        "eddy_model": active_watcher_model_name,
+        "eddy_error": watcher_error,
         "tool_count": len(registry.names()),
         "tool_loading": "on-demand via load_toolbox",
     }

@@ -400,13 +400,13 @@ if ! check_model; then
     fi
   fi
 
-  # Dedicated bee on :8092 when possible, otherwise route all bee traffic to :8090.
+  # Dedicated eddy model on :8092 when possible, otherwise route helper traffic to :8090.
   if curl -sf http://localhost:8090/health > /dev/null 2>&1; then
     BEE_MODEL=""
     if [ -n "$BEE_OVERRIDE" ]; then
       BEE_MODEL="$(resolve_model_path "$BEE_OVERRIDE")"
       if [ -z "$BEE_MODEL" ]; then
-        echo "  requested bee model not found: $BEE_OVERRIDE"
+        echo "  requested eddy model not found: $BEE_OVERRIDE"
         exit 1
       fi
     elif [ -n "$TEXT_2B" ] && [ "$PREFERRED_WAVE" != "$TEXT_2B" ]; then
@@ -417,9 +417,9 @@ if ! check_model; then
 
     if [ -n "$BEE_MODEL" ] && [ -f "$LLAMA" ]; then
       clear_stale_llama_port 8092 || true
-      echo "  starting bee on :8092 -> $(basename "$BEE_MODEL")"
+      echo "  starting eddy on :8092 -> $(basename "$BEE_MODEL")"
       BEE_PID="$(start_llama_server 8092 "$BEE_MODEL" "$(resolve_mmproj_for_model "$BEE_MODEL")" "" "")"
-      if wait_for_health 8092 60 "/tmp/llama-server-8092.log" "${BEE_PID:-}" "bee"; then
+      if wait_for_health 8092 60 "/tmp/llama-server-8092.log" "${BEE_PID:-}" "eddy"; then
         BEE_ENDPOINT="http://localhost:8092"
         export TSUNAMI_ACTIVE_WATCHER_MODEL_NAME="$(basename "$BEE_MODEL")"
       else
