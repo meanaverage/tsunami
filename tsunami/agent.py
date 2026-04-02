@@ -665,6 +665,44 @@ class Agent:
                             pass
                     return
 
+    def _inject_autonomous_recovery_context(self):
+        """Re-ground the model in the active project's brief/checklist after empty turns."""
+        if not self.active_project:
+            self.state.add_system_note(
+                "AUTONOMOUS RECOVERY: you produced multiple empty responses. "
+                "Do not ask the user for guidance. Pick a concrete next action and call a tool."
+            )
+            return
+
+        project_root = self._active_project_root_path()
+        notes: list[str] = []
+
+        if self.project_context:
+            notes.append(f"PROJECT BRIEF (tsunami.md):\n{self.project_context}")
+
+        if project_root:
+            todo_path = project_root / "todo.md"
+            if todo_path.exists():
+                try:
+                    todo = todo_path.read_text(encoding="utf-8").strip()
+                    if todo:
+                        notes.append(f"CHECKLIST (todo.md):\n{todo}")
+                except Exception:
+                    pass
+
+            app_path = project_root / "src" / "App.tsx"
+            if app_path.exists():
+                if self._active_project_has_stub_app():
+                    notes.append("STATE: src/App.tsx is still the default stub. Replace it now.")
+                else:
+                    notes.append("STATE: src/App.tsx exists. Continue wiring or fixing the active project.")
+
+        notes.append(
+            "AUTONOMOUS RECOVERY: do not use message_ask. "
+            "Next tool should either read tsunami.md/todo.md/App.tsx for grounding or directly write/edit src/App.tsx or src/components."
+        )
+        self.state.add_system_note("\n\n".join(notes))
+
     def set_project(self, project_name: str) -> str:
         """Set the active project and load its tsunami.md context."""
         project_dir = Path(self.config.workspace_dir) / "deliverables" / project_name
@@ -1124,10 +1162,7 @@ class Agent:
             else:
                 self._empty_steps += 1
                 if self._empty_steps >= 3:
-                    self.state.add_system_note(
-                        "Multiple empty responses. You MUST call a tool. "
-                        "If the task is done, call message_result. If stuck, call message_ask."
-                    )
+                    self._inject_autonomous_recovery_context()
                     self._empty_steps = 0
                 return ""
 

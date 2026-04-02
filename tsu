@@ -10,6 +10,7 @@ TSUNAMI_DOCKER_BACKEND="${TSUNAMI_DOCKER_BACKEND:-auto}"
 TSUNAMI_DOCKER_IMAGE="${TSUNAMI_DOCKER_IMAGE:-tsunami-exec:latest}"
 TSUNAMI_DOCKER_ROOT="${TSUNAMI_DOCKER_ROOT:-/workspace/tsunami}"
 TSUNAMI_DOCKER_REBUILD="${TSUNAMI_DOCKER_REBUILD:-0}"
+TSUNAMI_DESKTOP_UI="${TSUNAMI_DESKTOP_UI:-1}"
 TSUNAMI_CTX_SIZE="${TSUNAMI_CTX_SIZE:-32768}"
 STARTED_DOCKER_BACKEND=0
 
@@ -107,7 +108,7 @@ docker_port_publish_args() {
   local port args=()
   args+=(-p 3000:3000)
 
-  for port in 4173 5173 8000 8080 9876; do
+  for port in 3002 3003 4173 5173 8000 8080 9876; do
     if lsof -ti "tcp:${port}" >/dev/null 2>&1; then
       echo "  docker backend: leaving host port :${port} untouched (already in use)" >&2
       continue
@@ -152,6 +153,51 @@ start_docker_backend() {
 
   STARTED_DOCKER_BACKEND=1
   return 0
+}
+
+desktop_ui_requested() {
+  case "$TSUNAMI_DESKTOP_UI" in
+    0|false|no|off|disabled) return 1 ;;
+    *) [ -f "$DIR/desktop/index.html" ] && [ -f "$DIR/desktop/ws_bridge.py" ] && [ -f "$DIR/desktop/file_watcher.py" ] ;;
+  esac
+}
+
+desktop_bridge_running() {
+  lsof -ti "tcp:3002" >/dev/null 2>&1
+}
+
+desktop_file_watcher_running() {
+  lsof -ti "tcp:3003" >/dev/null 2>&1
+}
+
+start_desktop_bridge() {
+  if desktop_bridge_running; then
+    return 0
+  fi
+  "$PYTHON_BIN" "$DIR/desktop/ws_bridge.py" > /tmp/tsunami-desktop-bridge.log 2>&1 &
+  DESKTOP_BRIDGE_PID=$!
+  for _ in $(seq 1 20); do
+    if desktop_bridge_running; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  return 1
+}
+
+start_desktop_file_watcher() {
+  if desktop_file_watcher_running; then
+    return 0
+  fi
+  "$PYTHON_BIN" "$DIR/desktop/file_watcher.py" > /tmp/tsunami-desktop-files.log 2>&1 &
+  DESKTOP_FILE_WATCHER_PID=$!
+  for _ in $(seq 1 20); do
+    if desktop_file_watcher_running; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  return 1
 }
 
 wait_for_health() {
@@ -506,11 +552,28 @@ cleanup() {
   [ -n "${SERVER_PID:-}" ] && kill "$SERVER_PID" 2>/dev/null
   [ -n "${MODEL_PID:-}" ] && kill "$MODEL_PID" 2>/dev/null
   [ -n "${BEE_PID:-}" ] && kill "$BEE_PID" 2>/dev/null
+  [ -n "${DESKTOP_BRIDGE_PID:-}" ] && kill "$DESKTOP_BRIDGE_PID" 2>/dev/null
+  [ -n "${DESKTOP_FILE_WATCHER_PID:-}" ] && kill "$DESKTOP_FILE_WATCHER_PID" 2>/dev/null
   if [ "$STARTED_DOCKER_BACKEND" = "1" ]; then
     docker rm -f "$(docker_container_name)" >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
+
+if desktop_ui_requested; then
+  if start_desktop_bridge; then
+    if start_desktop_file_watcher; then
+      echo "  desktop UI ready:"
+      echo "    file://$DIR/desktop/index.html"
+      echo "    agent events: ws://localhost:3002"
+      echo "    file updates: ws://localhost:3003"
+    else
+      echo "  desktop file watcher failed to start; see /tmp/tsunami-desktop-files.log"
+    fi
+  else
+    echo "  desktop bridge failed to start; see /tmp/tsunami-desktop-bridge.log"
+  fi
+fi
 
 # Launch frontend — prefer the built Ink CLI bundle, fall back to tsx for development.
 if [ -f "$DIR/cli/dist/tsunami.cjs" ] && [ "$BACKEND_READY" = "1" ]; then
